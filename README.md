@@ -8,6 +8,15 @@ Price Hunter is a local Python app for organizing sports-card inventory and prep
 - Set and parallel price search with CSV export (up to the API's 20-result search limit)
 - SportsCardsPro collection CSV import with price conversion and duplicate protection
 - Inventory columns for Graded 8/8.5, Graded 9, and PSA 10 with selective API refresh
+- Inventory filters for player, year, brand, set, parallel, card number, type, location, status, price, and refresh coverage
+- Background grading-price refresh with live progress, pause/resume, retry, and last-refreshed timestamps
+- Purchase-lot import from CardBusiness Starter Tracker workbooks
+- Equal per-card cost allocation with two-decimal exact reconciliation
+- Business expense, eBay sales, receipt indexing, and reporting pages
+- Row-based inventory editing, deletion, and bulk location/status/set/quantity changes
+- Multi-card listing queues, bulk draft generation, and selected-card background price refresh
+- Sales-to-inventory matching with cost of goods, monthly reporting, and profit
+- Sandbox-first eBay OAuth/Inventory API connection, offer creation, and confirmed publishing
 - Manual entry when the API is unavailable
 - Local SQLite inventory with generated SKUs
 - Cost and estimated-value dashboard

@@ -1,8 +1,10 @@
 import unittest
 
+from business_imports import equal_card_allocations
+from ebay import EbayConfig, listing_payloads
 from listings import build_description, build_title, suggested_price
 from scp_import import collection_row_to_card, import_identity
-from sportscardspro import available_prices, build_card_search_query, inventory_grade_prices, matches_terms, product_price_row
+from sportscardspro import available_prices, build_card_search_query, inventory_grade_prices, matches_parallel, matches_terms, product_price_row
 
 
 class ListingRulesTests(unittest.TestCase):
@@ -78,6 +80,57 @@ class ListingRulesTests(unittest.TestCase):
             "graded_9_price": 9.0,
             "psa_10_price": 10.0,
         })
+
+    def test_parallel_filter_only_uses_variant_labels(self):
+        self.assertFalse(matches_parallel("Cam Reddish [Green Laser] #53", "Red"))
+        self.assertTrue(matches_parallel("Walker Kessler [Red Mojo] #250", "Red"))
+        self.assertTrue(matches_parallel("Jaime Jaquez Jr. [Choice Red] #213", "Red"))
+        self.assertTrue(matches_parallel("Player [Alternate Art] #1", "Alternate Arts"))
+
+    def test_equal_card_allocation_reconciles_to_the_cent(self):
+        allocations = equal_card_allocations(
+            10.00,
+            [{"id": 1, "quantity": 1}, {"id": 2, "quantity": 2}],
+        )
+        self.assertEqual([row["allocated_total"] for row in allocations], [3.34, 6.66])
+        self.assertEqual(sum(row["allocated_total"] for row in allocations), 10.00)
+        self.assertEqual(allocations[0]["higher_cost_units"], 1)
+
+    def test_equal_card_allocation_requires_physical_cards(self):
+        with self.assertRaises(ValueError):
+            equal_card_allocations(10, [])
+
+    def test_ebay_payload_uses_saved_listing_and_policy_settings(self):
+        config = EbayConfig(
+            environment="Sandbox",
+            client_id="",
+            client_secret="",
+            refresh_token="",
+            access_token="token",
+            marketplace_id="EBAY_US",
+            merchant_location_key="home",
+            category_id="123",
+            fulfillment_policy_id="f",
+            payment_policy_id="p",
+            return_policy_id="r",
+            condition="USED_EXCELLENT",
+        )
+        inventory, offer = listing_payloads({
+            "sku": "PH-1",
+            "quantity": 1,
+            "listing_title": "Card title",
+            "listing_description": "Card description",
+            "list_price": 12.34,
+            "image_urls": "https://example.com/front.jpg\nhttps://example.com/back.jpg",
+            "set_name": "Set",
+            "card_number": "1",
+        }, config)
+        self.assertEqual(inventory["product"]["imageUrls"], [
+            "https://example.com/front.jpg",
+            "https://example.com/back.jpg",
+        ])
+        self.assertEqual(offer["pricingSummary"]["price"]["value"], "12.34")
+        self.assertEqual(offer["listingPolicies"]["fulfillmentPolicyId"], "f")
 
 
 if __name__ == "__main__":

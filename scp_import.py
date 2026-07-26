@@ -72,6 +72,7 @@ def collection_row_to_card(row: dict[str, Any]) -> dict[str, Any]:
         "graded_9_price": market_price if include.casefold() == "graded 9" else None,
         "psa_10_price": market_price if include.casefold() == "psa 10" else None,
         "grade_prices_refreshed": 0,
+        "grade_prices_refreshed_at": None,
         "storage_location": _text(row.get("folder")),
         "notes": notes,
     }

@@ -4,3 +4,4 @@ __pycache__/
 *.py[cod]
 price_hunter.db
 
+.tools/node_modules

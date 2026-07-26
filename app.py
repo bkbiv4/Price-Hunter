@@ -8,6 +8,16 @@ import streamlit as st
 from dotenv import load_dotenv, set_key
 
 import database
+import price_refresh
+from business_ui import (
+    render_allocation,
+    render_expenses,
+    render_purchases,
+    render_receipts,
+    render_reports,
+    render_sales,
+)
+from ebay import EbayClient, EbayConfig, EbayError, listing_payloads
 from listings import build_description, build_title, suggested_price
 from scp_import import REQUIRED_COLUMNS, collection_row_to_card, import_identity
 from sportscardspro import (
@@ -16,6 +26,7 @@ from sportscardspro import (
     available_prices,
     build_card_search_query,
     inventory_grade_prices,
+    matches_parallel,
     matches_terms,
     product_price_row,
 )
@@ -51,9 +62,49 @@ with st.sidebar:
         st.caption("A saved token is available on this computer.")
     st.caption("API requests are automatically limited to one per second.")
 
-inventory_tab, price_search_tab, add_tab, listing_tab = st.tabs(
-    ["Inventory", "Price search", "Add a card", "Listing studio"]
+(
+    inventory_tab,
+    purchases_tab,
+    allocation_tab,
+    expenses_tab,
+    sales_tab,
+    receipts_tab,
+    reports_tab,
+    price_search_tab,
+    add_tab,
+    listing_tab,
+) = st.tabs(
+    [
+        "Inventory",
+        "Purchases",
+        "Cost allocation",
+        "Expenses",
+        "Sales",
+        "Receipts",
+        "Reports",
+        "Price search",
+        "Add a card",
+        "Listing studio",
+    ]
 )
+
+with purchases_tab:
+    render_purchases()
+
+with allocation_tab:
+    render_allocation()
+
+with expenses_tab:
+    render_expenses()
+
+with sales_tab:
+    render_sales()
+
+with receipts_tab:
+    render_receipts()
+
+with reports_tab:
+    render_reports()
 
 with price_search_tab:
     st.subheader("Search a set or parallel")
@@ -87,7 +138,7 @@ with price_search_tab:
                 row
                 for row in candidates
                 if matches_terms(row.get("console-name"), set_filter)
-                and matches_terms(row.get("product-name"), parallel_filter)
+                and matches_parallel(row.get("product-name"), parallel_filter)
             ]
             st.session_state.price_search_candidates = filtered
             st.session_state.price_search_rows = []
@@ -311,28 +362,231 @@ with inventory_tab:
         st.info("Your inventory is empty. Use ‘Add a card’ to create the first item.")
     else:
         frame = pd.DataFrame(cards)
-        total_cost = (frame["cost"] * frame["quantity"]).sum()
-        total_market = (frame["market_price"].fillna(0) * frame["quantity"]).sum()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Inventory items", len(frame))
+
+        with st.expander("Filter inventory", expanded=True):
+            filter_row_1 = st.columns(4)
+            with filter_row_1[0]:
+                name_filter = st.text_input("Player / card name", key="inventory_name_filter")
+            with filter_row_1[1]:
+                year_filter = st.text_input("Year", key="inventory_year_filter")
+            with filter_row_1[2]:
+                brand_filter = st.text_input("Brand", key="inventory_brand_filter")
+            with filter_row_1[3]:
+                set_name_filter = st.text_input("Set", key="inventory_set_filter")
+
+            filter_row_2 = st.columns(4)
+            with filter_row_2[0]:
+                parallel_inventory_filter = st.text_input("Parallel", key="inventory_parallel_filter")
+            with filter_row_2[1]:
+                number_filter = st.text_input("Card number", key="inventory_number_filter")
+            with filter_row_2[2]:
+                condition_filter = st.multiselect(
+                    "Card type",
+                    sorted(value for value in frame["condition"].dropna().unique() if value),
+                    key="inventory_condition_filter",
+                )
+            with filter_row_2[3]:
+                location_filter = st.multiselect(
+                    "Storage location",
+                    sorted(value for value in frame["storage_location"].dropna().unique() if value),
+                    key="inventory_location_filter",
+                )
+
+            filter_row_3 = st.columns(4)
+            with filter_row_3[0]:
+                minimum_price = st.number_input(
+                    "Minimum market price", min_value=0.0, value=0.0,
+                    format="%.2f", key="inventory_min_price",
+                )
+            with filter_row_3[1]:
+                maximum_price = st.number_input(
+                    "Maximum market price", min_value=0.0, value=0.0,
+                    format="%.2f", help="Leave at 0 for no maximum.",
+                    key="inventory_max_price",
+                )
+            with filter_row_3[2]:
+                price_coverage_filter = st.selectbox(
+                    "Grading-price status", ["All", "Fetched", "Not fetched"],
+                    key="inventory_price_coverage_filter",
+                )
+            with filter_row_3[3]:
+                status_filter = st.multiselect(
+                    "Inventory status",
+                    sorted(value for value in frame["status"].dropna().unique() if value),
+                    key="inventory_status_filter",
+                )
+
+        def filter_text(data: pd.DataFrame, column: str, text: str) -> pd.DataFrame:
+            if not text.strip():
+                return data
+            return data[data[column].fillna("").map(lambda value: matches_terms(value, text))]
+
+        filtered_frame = frame.copy()
+        filtered_frame = filter_text(filtered_frame, "card_name", name_filter)
+        filtered_frame = filter_text(filtered_frame, "set_name", year_filter)
+        filtered_frame = filter_text(filtered_frame, "set_name", brand_filter)
+        filtered_frame = filter_text(filtered_frame, "set_name", set_name_filter)
+        if parallel_inventory_filter.strip():
+            filtered_frame = filtered_frame[
+                filtered_frame["card_name"].fillna("").map(
+                    lambda value: matches_parallel(value, parallel_inventory_filter)
+                )
+            ]
+        filtered_frame = filter_text(filtered_frame, "card_number", number_filter)
+        if condition_filter:
+            filtered_frame = filtered_frame[filtered_frame["condition"].isin(condition_filter)]
+        if location_filter:
+            filtered_frame = filtered_frame[filtered_frame["storage_location"].isin(location_filter)]
+        if status_filter:
+            filtered_frame = filtered_frame[filtered_frame["status"].isin(status_filter)]
+        if minimum_price:
+            filtered_frame = filtered_frame[filtered_frame["market_price"].fillna(0) >= minimum_price]
+        if maximum_price:
+            filtered_frame = filtered_frame[filtered_frame["market_price"].fillna(0) <= maximum_price]
+        if price_coverage_filter == "Fetched":
+            filtered_frame = filtered_frame[filtered_frame["grade_prices_refreshed"] == 1]
+        elif price_coverage_filter == "Not fetched":
+            filtered_frame = filtered_frame[filtered_frame["grade_prices_refreshed"] == 0]
+        row_cost_totals = filtered_frame["allocated_cost_total"].fillna(
+            filtered_frame["cost"] * filtered_frame["quantity"]
+        )
+        total_cost = row_cost_totals.sum()
+        total_market = (filtered_frame["market_price"].fillna(0) * filtered_frame["quantity"]).sum()
+        total_grade_9 = (filtered_frame["graded_9_price"].fillna(0) * filtered_frame["quantity"]).sum()
+        total_psa_10 = (filtered_frame["psa_10_price"].fillna(0) * filtered_frame["quantity"]).sum()
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Inventory items", len(filtered_frame), f"{len(filtered_frame):,} of {len(frame):,}")
         c2.metric("Total cost", f"${total_cost:,.2f}")
         c3.metric("Market estimate", f"${total_market:,.2f}", f"${total_market-total_cost:,.2f}")
-        display_columns = ["sku", "card_name", "set_name", "condition", "grader", "grade", "quantity", "cost", "market_price", "graded_8_price", "graded_9_price", "psa_10_price", "list_price", "status", "storage_location"]
-        st.dataframe(
-            frame[display_columns],
+        c4.metric("Grade 9 estimate", f"${total_grade_9:,.2f}", f"${total_grade_9-total_cost:,.2f}")
+        c5.metric("PSA 10 estimate", f"${total_psa_10:,.2f}", f"${total_psa_10-total_cost:,.2f}")
+        refreshed_count = int(frame["grade_prices_refreshed"].fillna(0).sum())
+        coverage = refreshed_count / len(frame) if len(frame) else 0
+        refresh_dates = frame["grade_prices_refreshed_at"].dropna()
+        last_refreshed = refresh_dates.max() if not refresh_dates.empty else "Never"
+        st.caption(
+            f"Grading-price coverage: {refreshed_count:,} of {len(frame):,} cards ({coverage:.1%}). "
+            f"Last completed API refresh: {last_refreshed}."
+        )
+        display_columns = ["sku", "card_name", "set_name", "card_number", "condition", "grader", "grade", "quantity", "cost", "allocated_cost_total", "market_price", "graded_8_price", "graded_9_price", "psa_10_price", "grade_prices_refreshed_at", "list_price", "status", "storage_location"]
+        inventory_event = st.dataframe(
+            filtered_frame[display_columns],
             use_container_width=True,
             hide_index=True,
+            key="inventory_grid",
+            on_select="rerun",
+            selection_mode="multi-row",
             column_config={
                 "graded_8_price": st.column_config.NumberColumn("Graded 8 / 8.5", format="$%.2f"),
                 "graded_9_price": st.column_config.NumberColumn("Graded 9", format="$%.2f"),
                 "psa_10_price": st.column_config.NumberColumn("PSA 10", format="$%.2f"),
+                "allocated_cost_total": st.column_config.NumberColumn("Allocated cost total", format="$%.2f"),
+                "grade_prices_refreshed_at": st.column_config.DatetimeColumn("Prices refreshed"),
             },
         )
+        selected_positions = inventory_event.selection.rows
+        selected_cards = [
+            filtered_frame.iloc[position].to_dict()
+            for position in selected_positions
+            if position < len(filtered_frame)
+        ]
+        selected_ids = [int(card["id"]) for card in selected_cards]
+        if selected_cards:
+            st.caption(f"{len(selected_cards):,} inventory row(s) selected.")
+            selection_actions = st.columns(2)
+            with selection_actions[0]:
+                if st.button("Add selected cards to listing queue"):
+                    st.session_state.listing_queue_ids = selected_ids
+                    st.success(f"Added {len(selected_ids):,} cards to the listing queue.")
+            with selection_actions[1]:
+                refreshable = [card for card in selected_cards if card.get("scp_id")]
+                if st.button(
+                    "Refresh selected card prices",
+                    disabled=price_refresh.is_running() or not (token and refreshable),
+                ):
+                    price_refresh.start(refreshable, token)
+                    st.rerun()
+
+        with st.expander("Edit, bulk update, or delete selected inventory"):
+            if not selected_cards:
+                st.info("Select one or more rows in the inventory table.")
+            else:
+                if len(selected_cards) == 1:
+                    edit_card = selected_cards[0]
+                    st.markdown("#### Edit selected card")
+                    edit_left, edit_right = st.columns(2)
+                    with edit_left:
+                        edit_name = st.text_input("Card name", value=edit_card["card_name"], key=f"edit_card_name_{edit_card['id']}")
+                        edit_set = st.text_input("Set name", value=edit_card["set_name"], key=f"edit_set_name_{edit_card['id']}")
+                        edit_number = st.text_input("Card number", value=edit_card["card_number"], key=f"edit_card_number_{edit_card['id']}")
+                        edit_location = st.text_input(
+                            "Storage location", value=edit_card["storage_location"], key=f"edit_location_{edit_card['id']}"
+                        )
+                    with edit_right:
+                        edit_quantity = st.number_input(
+                            "Quantity", min_value=0, value=int(edit_card["quantity"]), step=1, key=f"edit_quantity_{edit_card['id']}"
+                        )
+                        edit_cost = st.number_input(
+                            "Cost per card", min_value=0.0, value=float(edit_card["cost"]), format="%.2f",
+                            key=f"edit_cost_{edit_card['id']}",
+                        )
+                        edit_status = st.selectbox(
+                            "Status", ["Draft", "Ready", "Listed", "Sold"],
+                            index=["Draft", "Ready", "Listed", "Sold"].index(edit_card["status"])
+                            if edit_card["status"] in ["Draft", "Ready", "Listed", "Sold"] else 0,
+                            key=f"edit_status_{edit_card['id']}",
+                        )
+                        edit_images = st.text_area(
+                            "Public image URLs (one per line)",
+                            value=edit_card.get("image_urls", ""),
+                            key=f"edit_images_{edit_card['id']}",
+                        )
+                    if st.button("Save selected card"):
+                        database.update_card(int(edit_card["id"]), {
+                            "card_name": edit_name.strip(),
+                            "set_name": edit_set.strip(),
+                            "card_number": edit_number.strip(),
+                            "storage_location": edit_location.strip(),
+                            "quantity": int(edit_quantity),
+                            "cost": float(edit_cost),
+                            "status": edit_status,
+                            "image_urls": edit_images.strip(),
+                        })
+                        st.rerun()
+
+                st.markdown("#### Bulk changes")
+                bulk_left, bulk_right = st.columns(2)
+                bulk_values = {}
+                with bulk_left:
+                    if st.checkbox("Change storage location"):
+                        bulk_values["storage_location"] = st.text_input("New storage location").strip()
+                    if st.checkbox("Change set name"):
+                        bulk_values["set_name"] = st.text_input("New set name").strip()
+                with bulk_right:
+                    if st.checkbox("Change status"):
+                        bulk_values["status"] = st.selectbox(
+                            "New status", ["Draft", "Ready", "Listed", "Sold"], key="bulk_status"
+                        )
+                    if st.checkbox("Change quantity"):
+                        bulk_values["quantity"] = int(st.number_input(
+                            "New quantity", min_value=0, value=1, step=1, key="bulk_quantity"
+                        ))
+                if st.button("Apply bulk changes", disabled=not bulk_values):
+                    database.update_cards(selected_ids, bulk_values)
+                    st.rerun()
+
+                st.markdown("#### Delete")
+                confirm_delete = st.checkbox(
+                    f"I understand this will permanently delete {len(selected_ids):,} inventory row(s)."
+                )
+                if st.button("Delete selected inventory", disabled=not confirm_delete, type="secondary"):
+                    database.delete_cards(selected_ids)
+                    st.rerun()
 
         with st.expander("Refresh grading prices from SportsCardsPro"):
             st.caption(
-                "Collection exports contain only the selected condition's price. Fetch the missing "
-                "Graded 8/8.5, Graded 9, and PSA 10 values here. SportsCardsPro permits one request per second."
+                "Refreshes run in the background at SportsCardsPro's one-request-per-second limit. "
+                "You can use other tabs while the job runs."
             )
             refresh_choices = {
                 f"{card['sku']} — {card['card_name']}": card for card in cards if card.get("scp_id")
@@ -344,64 +598,238 @@ with inventory_tab:
             ]
             st.write(f"{len(missing_cards):,} inventory cards have not had grading prices fetched yet.")
             batch_size = st.number_input(
-                "Automatic batch size",
+                "Small batch size",
                 min_value=1,
                 max_value=100,
                 value=25,
-                help="A batch of 25 takes roughly 25 seconds because of the API rate limit.",
+                help="Useful for a quick partial update. The full refresh has no 100-card ceiling.",
             )
+            if missing_cards:
+                estimated_minutes = len(missing_cards) * 1.05 / 60
+                st.caption(
+                    f"Refreshing all {len(missing_cards):,} missing cards will take approximately "
+                    f"{estimated_minutes:,.0f} minutes."
+                )
 
-            def refresh_cards(cards_to_refresh: list[dict]) -> None:
-                client = SportsCardsProClient(token)
-                refresh_progress = st.progress(0, text="Refreshing grading prices...")
-                try:
-                    for refresh_index, card in enumerate(cards_to_refresh, start=1):
-                        product_data = client.product(card["scp_id"])
-                        database.update_card(card["id"], {
-                            **inventory_grade_prices(product_data),
-                            "grade_prices_refreshed": 1,
-                        })
-                        refresh_progress.progress(
-                            refresh_index / len(cards_to_refresh),
-                            text=f"Refreshed {refresh_index} of {len(cards_to_refresh)} cards",
-                        )
-                    st.session_state.price_refresh_message = (
-                        f"Updated grading prices for {len(cards_to_refresh)} cards."
+            @st.fragment(run_every=2)
+            def refresh_status_panel() -> None:
+                job = price_refresh.get_status()
+                if job["state"] in {"running", "pausing"}:
+                    progress_value = job["processed"] / job["total"] if job["total"] else 0
+                    st.progress(
+                        progress_value,
+                        text=f"{job['state'].title()}: {job['processed']:,} of {job['total']:,}",
                     )
+                    if job["current"]:
+                        st.caption(f"Current: {job['current']}")
+                elif job["state"] == "completed":
+                    st.success(f"Background refresh completed: {job['succeeded']:,} cards updated.")
+                elif job["state"] == "paused":
+                    st.warning(f"Refresh paused after {job['succeeded']:,} successful updates.")
+                elif job["state"] == "error":
+                    st.error(f"Refresh stopped: {job['last_error']}")
+
+            refresh_status_panel()
+            job_running = price_refresh.is_running()
+            refresh_buttons = st.columns(4)
+
+            with refresh_buttons[0]:
+                if st.button(
+                    "Start small batch",
+                    disabled=job_running or not (token and missing_cards),
+                    type="primary",
+                ):
+                    price_refresh.start(missing_cards[: int(batch_size)], token)
                     st.rerun()
-                except (SportsCardsProError, ValueError) as exc:
-                    st.error(str(exc))
-                finally:
-                    refresh_progress.empty()
 
+            with refresh_buttons[1]:
+                if st.button(
+                    "Refresh all missing",
+                    disabled=job_running or not (token and missing_cards),
+                ):
+                    price_refresh.start(missing_cards, token)
+                    st.rerun()
+
+            with refresh_buttons[2]:
+                if st.button("Pause refresh", disabled=not job_running):
+                    price_refresh.pause()
+                    st.rerun()
+
+            with refresh_buttons[3]:
+                if st.button("Reload inventory values"):
+                    st.rerun()
+
+            selected_refresh = st.multiselect("Refresh specific cards", refresh_choices)
             if st.button(
-                "Refresh next missing-price batch",
-                disabled=not (token and missing_cards),
-                type="primary",
+                "Start selected refresh",
+                disabled=job_running or not (token and selected_refresh),
             ):
-                refresh_cards(missing_cards[: int(batch_size)])
-
-            selected_refresh = st.multiselect("Cards to refresh", refresh_choices)
-            if st.button("Refresh selected prices", disabled=not (token and selected_refresh)):
-                if len(selected_refresh) > 25:
-                    st.error("Choose no more than 25 cards per refresh.")
-                else:
-                    refresh_cards([refresh_choices[label] for label in selected_refresh])
+                price_refresh.start([refresh_choices[label] for label in selected_refresh], token)
+                st.rerun()
         st.download_button(
-            "Export inventory CSV",
-            frame.to_csv(index=False).encode("utf-8"),
-            file_name="price_hunter_inventory.csv",
+            "Export filtered inventory CSV",
+            filtered_frame.to_csv(index=False).encode("utf-8"),
+            file_name="price_hunter_inventory_filtered.csv",
             mime="text/csv",
         )
 
 with listing_tab:
     cards = database.all_cards()
+    with st.expander("eBay API connection and policies"):
+        ebay_environment = st.selectbox(
+            "Environment",
+            ["Sandbox", "Production"],
+            index=0 if os.getenv("EBAY_ENVIRONMENT", "Sandbox") == "Sandbox" else 1,
+        )
+        ebay_columns = st.columns(2)
+        with ebay_columns[0]:
+            ebay_client_id = st.text_input("Client ID", value=os.getenv("EBAY_CLIENT_ID", ""))
+            ebay_client_secret = st.text_input(
+                "Client secret", value=os.getenv("EBAY_CLIENT_SECRET", ""), type="password"
+            )
+            ebay_refresh_token = st.text_area(
+                "User refresh token", value=os.getenv("EBAY_REFRESH_TOKEN", "")
+            )
+            ebay_access_token = st.text_area(
+                "Temporary user access token", value=os.getenv("EBAY_ACCESS_TOKEN", ""),
+                help="Optional when client credentials and a refresh token are configured.",
+            )
+        with ebay_columns[1]:
+            ebay_marketplace = st.text_input(
+                "Marketplace ID", value=os.getenv("EBAY_MARKETPLACE_ID", "EBAY_US")
+            )
+            ebay_location = st.text_input(
+                "Merchant location key", value=os.getenv("EBAY_LOCATION_KEY", "")
+            )
+            ebay_category = st.text_input(
+                "Trading-card category ID", value=os.getenv("EBAY_CATEGORY_ID", "")
+            )
+            ebay_fulfillment = st.text_input(
+                "Fulfillment policy ID", value=os.getenv("EBAY_FULFILLMENT_POLICY_ID", "")
+            )
+            ebay_payment = st.text_input(
+                "Payment policy ID", value=os.getenv("EBAY_PAYMENT_POLICY_ID", "")
+            )
+            ebay_return = st.text_input(
+                "Return policy ID", value=os.getenv("EBAY_RETURN_POLICY_ID", "")
+            )
+            ebay_condition = st.text_input(
+                "eBay condition enum",
+                value=os.getenv("EBAY_CONDITION", ""),
+                help="Trading-card condition requirements vary by category; enter the enum required by eBay.",
+            )
+
+        ebay_config = EbayConfig(
+            environment=ebay_environment,
+            client_id=ebay_client_id.strip(),
+            client_secret=ebay_client_secret.strip(),
+            refresh_token=ebay_refresh_token.strip(),
+            access_token=ebay_access_token.strip(),
+            marketplace_id=ebay_marketplace.strip(),
+            merchant_location_key=ebay_location.strip(),
+            category_id=ebay_category.strip(),
+            fulfillment_policy_id=ebay_fulfillment.strip(),
+            payment_policy_id=ebay_payment.strip(),
+            return_policy_id=ebay_return.strip(),
+            condition=ebay_condition.strip(),
+        )
+        ebay_buttons = st.columns(2)
+        with ebay_buttons[0]:
+            if st.button("Save eBay settings locally"):
+                settings = {
+                    "EBAY_ENVIRONMENT": ebay_environment,
+                    "EBAY_CLIENT_ID": ebay_client_id.strip(),
+                    "EBAY_CLIENT_SECRET": ebay_client_secret.strip(),
+                    "EBAY_REFRESH_TOKEN": ebay_refresh_token.strip(),
+                    "EBAY_ACCESS_TOKEN": ebay_access_token.strip(),
+                    "EBAY_MARKETPLACE_ID": ebay_marketplace.strip(),
+                    "EBAY_LOCATION_KEY": ebay_location.strip(),
+                    "EBAY_CATEGORY_ID": ebay_category.strip(),
+                    "EBAY_FULFILLMENT_POLICY_ID": ebay_fulfillment.strip(),
+                    "EBAY_PAYMENT_POLICY_ID": ebay_payment.strip(),
+                    "EBAY_RETURN_POLICY_ID": ebay_return.strip(),
+                    "EBAY_CONDITION": ebay_condition.strip(),
+                }
+                for setting, value in settings.items():
+                    set_key(str(ENV_PATH), setting, value)
+                    os.environ[setting] = value
+                st.success("eBay settings saved in the private local .env file.")
+        with ebay_buttons[1]:
+            if st.button(
+                "Test eBay connection",
+                disabled=not (ebay_access_token or (ebay_client_id and ebay_client_secret and ebay_refresh_token)),
+            ):
+                try:
+                    version = EbayClient(ebay_config).test_connection()
+                    st.success(f"Connected to eBay {ebay_environment}: {version}")
+                except EbayError as exc:
+                    st.error(str(exc))
     if not cards:
         st.info("Add a card before creating a listing.")
     else:
         choices = {f"{card['sku']} — {card['card_name']}": card for card in cards}
-        label = st.selectbox("Inventory item", choices)
-        card = choices[label]
+        queued_ids = set(st.session_state.get("listing_queue_ids", []))
+        default_queue = [choice_label for choice_label, item in choices.items() if item["id"] in queued_ids]
+        queue_labels = st.multiselect(
+            "Listing queue",
+            choices,
+            default=default_queue,
+            help="Select multiple cards here or send selected rows from Inventory.",
+        )
+        queue_cards = [choices[choice_label] for choice_label in queue_labels]
+        queue_markup = st.number_input(
+            "Queue minimum markup over cost (%)",
+            min_value=0.0,
+            value=30.0,
+            step=5.0,
+            key="queue_markup",
+        )
+        if st.button("Generate drafts for listing queue", disabled=not queue_cards):
+            for queued_card in queue_cards:
+                database.update_card(queued_card["id"], {
+                    "listing_title": queued_card["listing_title"] or build_title(
+                        queued_card["card_name"], queued_card["set_name"], queued_card["grade"],
+                        queued_card["card_number"], queued_card["grader"],
+                    ),
+                    "listing_description": queued_card["listing_description"] or build_description(
+                        queued_card["card_name"], queued_card["set_name"], queued_card["condition"],
+                        queued_card["grade"], queued_card["notes"], queued_card["sku"],
+                        queued_card["grader"], queued_card["certification_number"],
+                    ),
+                    "list_price": queued_card["list_price"] or suggested_price(
+                        queued_card["market_price"], queued_card["cost"], queue_markup
+                    ),
+                    "status": "Draft",
+                })
+            st.success(f"Generated {len(queue_cards):,} listing drafts.")
+            st.rerun()
+
+        if queue_cards:
+            queue_frame = pd.DataFrame([{
+                "sku": item["sku"],
+                "title": item["listing_title"] or build_title(
+                    item["card_name"], item["set_name"], item["grade"], item["card_number"], item["grader"]
+                ),
+                "description": item["listing_description"] or build_description(
+                    item["card_name"], item["set_name"], item["condition"], item["grade"],
+                    item["notes"], item["sku"], item["grader"], item["certification_number"]
+                ),
+                "price": item["list_price"] or suggested_price(
+                    item["market_price"], item["cost"], queue_markup
+                ),
+                "quantity": item["quantity"],
+                "image_urls": item.get("image_urls", ""),
+            } for item in queue_cards])
+            st.download_button(
+                "Download listing queue CSV",
+                queue_frame.to_csv(index=False).encode("utf-8"),
+                file_name="price_hunter_ebay_drafts.csv",
+                mime="text/csv",
+            )
+
+        editor_choices = {choice_label: choices[choice_label] for choice_label in queue_labels} if queue_labels else choices
+        label = st.selectbox("Edit inventory item", editor_choices)
+        card = editor_choices[label]
         markup = st.number_input("Minimum markup over cost (%)", min_value=0.0, value=30.0, step=5.0)
         default_title = card["listing_title"] or build_title(
             card["card_name"], card["set_name"], card["grade"], card["card_number"], card["grader"]
@@ -418,6 +846,12 @@ with listing_tab:
             list_price = st.number_input("Buy It Now price", min_value=0.0, value=float(default_price), format="%.2f")
             status = st.selectbox("Status", ["Draft", "Ready", "Listed", "Sold"], index=["Draft", "Ready", "Listed", "Sold"].index(card["status"]) if card["status"] in ["Draft", "Ready", "Listed", "Sold"] else 0)
             ebay_item_id = st.text_input("eBay item number", value=card["ebay_item_id"])
+            ebay_offer_id = st.text_input("eBay offer ID", value=card.get("ebay_offer_id", ""))
+            image_urls = st.text_area(
+                "Public image URLs (one per line)",
+                value=card.get("image_urls", ""),
+                help="eBay must be able to download these images from public HTTPS URLs.",
+            )
             if st.form_submit_button("Save listing draft"):
                 database.update_card(card["id"], {
                     "listing_title": title.strip(),
@@ -425,5 +859,68 @@ with listing_tab:
                     "list_price": float(list_price),
                     "status": status,
                     "ebay_item_id": ebay_item_id.strip(),
+                    "ebay_offer_id": ebay_offer_id.strip(),
+                    "image_urls": image_urls.strip(),
                 })
                 st.success("Listing draft saved.")
+
+        st.markdown("#### Publish through eBay Inventory API")
+        required_ebay_config = [
+            ebay_config.marketplace_id,
+            ebay_config.merchant_location_key,
+            ebay_config.category_id,
+            ebay_config.fulfillment_policy_id,
+            ebay_config.payment_policy_id,
+            ebay_config.return_policy_id,
+            ebay_config.condition,
+        ]
+        publish_ready = bool(
+            title.strip()
+            and description.strip()
+            and list_price > 0
+            and image_urls.strip()
+            and all(required_ebay_config)
+            and (ebay_config.access_token or (
+                ebay_config.client_id and ebay_config.client_secret and ebay_config.refresh_token
+            ))
+        )
+        if not publish_ready:
+            st.caption(
+                "Publishing requires a saved draft, at least one public image URL, category, condition, "
+                "location, payment/return/fulfillment policies, and user OAuth credentials."
+            )
+        publish_confirmation = st.checkbox(
+            f"I confirm this will create a listing in eBay {ebay_environment}.",
+            key=f"publish_confirm_{card['id']}",
+        )
+        if st.button(
+            f"Publish {card['sku']} to eBay {ebay_environment}",
+            disabled=not (publish_ready and publish_confirmation),
+            type="primary",
+        ):
+            try:
+                publish_card = {
+                    **card,
+                    "listing_title": title.strip(),
+                    "listing_description": description.strip(),
+                    "list_price": float(list_price),
+                    "image_urls": image_urls.strip(),
+                }
+                inventory_payload, offer_payload = listing_payloads(publish_card, ebay_config)
+                ebay_client = EbayClient(ebay_config)
+                ebay_client.create_inventory_item(card["sku"], inventory_payload)
+                offer_id = ebay_offer_id.strip() or ebay_client.create_offer(offer_payload)
+                listing_id = ebay_client.publish_offer(offer_id)
+                database.update_card(card["id"], {
+                    "ebay_offer_id": offer_id,
+                    "ebay_item_id": listing_id,
+                    "listing_title": title.strip(),
+                    "listing_description": description.strip(),
+                    "list_price": float(list_price),
+                    "image_urls": image_urls.strip(),
+                    "status": "Listed",
+                })
+                st.success(f"Published eBay listing {listing_id}.")
+                st.rerun()
+            except EbayError as exc:
+                st.error(str(exc))

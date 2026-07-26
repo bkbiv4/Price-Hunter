@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+import re
 from typing import Any
 
 import requests
@@ -100,6 +101,18 @@ def matches_terms(value: Any, terms: str) -> bool:
     """Return True when every whitespace-separated search term is present."""
     haystack = str(value or "").casefold()
     return all(term.casefold() in haystack for term in terms.split())
+
+
+def matches_parallel(card_name: Any, terms: str) -> bool:
+    """Match parallel terms only within bracketed labels or Alternate Art text."""
+    if not terms.strip():
+        return True
+    name = str(card_name or "")
+    variant_labels = re.findall(r"\[([^\]]+)\]", name)
+    normalized_terms = terms.casefold().replace("arts", "art")
+    if normalized_terms in {"alternate art", "alternate"}:
+        return "alternate art" in name.casefold().replace("arts", "art")
+    return any(matches_terms(label, terms) for label in variant_labels)
 
 
 def build_card_search_query(*parts: Any) -> str:
