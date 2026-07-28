@@ -12,6 +12,8 @@ import price_refresh
 from business_ui import (
     render_allocation,
     render_expenses,
+    render_grading,
+    render_inventory_history,
     render_purchases,
     render_receipts,
     render_reports,
@@ -68,6 +70,8 @@ with st.sidebar:
     allocation_tab,
     expenses_tab,
     sales_tab,
+    grading_tab,
+    history_tab,
     receipts_tab,
     reports_tab,
     price_search_tab,
@@ -80,6 +84,8 @@ with st.sidebar:
         "Cost allocation",
         "Expenses",
         "Sales",
+        "Grading",
+        "History",
         "Receipts",
         "Reports",
         "Price search",
@@ -99,6 +105,12 @@ with expenses_tab:
 
 with sales_tab:
     render_sales()
+
+with grading_tab:
+    render_grading()
+
+with history_tab:
+    render_inventory_history()
 
 with receipts_tab:
     render_receipts()
@@ -468,7 +480,7 @@ with inventory_tab:
             f"Grading-price coverage: {refreshed_count:,} of {len(frame):,} cards ({coverage:.1%}). "
             f"Last completed API refresh: {last_refreshed}."
         )
-        display_columns = ["sku", "card_name", "set_name", "card_number", "condition", "grader", "grade", "quantity", "cost", "allocated_cost_total", "market_price", "graded_8_price", "graded_9_price", "psa_10_price", "grade_prices_refreshed_at", "list_price", "status", "storage_location"]
+        display_columns = ["sku", "card_name", "set_name", "card_number", "condition", "grader", "grade", "grading_status", "quantity", "cost", "allocated_cost_total", "market_price", "graded_8_price", "graded_9_price", "psa_10_price", "grade_prices_refreshed_at", "list_price", "status", "storage_location"]
         inventory_event = st.dataframe(
             filtered_frame[display_columns],
             use_container_width=True,
@@ -519,6 +531,37 @@ with inventory_tab:
                         edit_name = st.text_input("Card name", value=edit_card["card_name"], key=f"edit_card_name_{edit_card['id']}")
                         edit_set = st.text_input("Set name", value=edit_card["set_name"], key=f"edit_set_name_{edit_card['id']}")
                         edit_number = st.text_input("Card number", value=edit_card["card_number"], key=f"edit_card_number_{edit_card['id']}")
+                        condition_options = ["Raw / Ungraded", "Graded", "Sealed", "Other"]
+                        current_condition = edit_card.get("condition") or "Raw / Ungraded"
+                        if current_condition not in condition_options:
+                            condition_options.append(current_condition)
+                        edit_condition = st.selectbox(
+                            "Condition",
+                            condition_options,
+                            index=condition_options.index(current_condition),
+                            key=f"edit_condition_{edit_card['id']}",
+                        )
+                        if edit_condition == "Graded":
+                            edit_grader = st.selectbox(
+                                "Grading company",
+                                ["PSA", "SGC", "BGS", "CGC", "Other"],
+                                index=["PSA", "SGC", "BGS", "CGC", "Other"].index(edit_card["grader"])
+                                if edit_card.get("grader") in ["PSA", "SGC", "BGS", "CGC", "Other"] else 0,
+                                key=f"edit_grader_{edit_card['id']}",
+                            )
+                            edit_grade = st.text_input(
+                                "Numeric grade", value=str(edit_card.get("grade") or ""),
+                                key=f"edit_grade_{edit_card['id']}",
+                            )
+                            edit_certification = st.text_input(
+                                "Certification number",
+                                value=edit_card.get("certification_number", ""),
+                                key=f"edit_certification_{edit_card['id']}",
+                            )
+                        else:
+                            edit_grader = ""
+                            edit_grade = ""
+                            edit_certification = ""
                         edit_location = st.text_input(
                             "Storage location", value=edit_card["storage_location"], key=f"edit_location_{edit_card['id']}"
                         )
@@ -531,9 +574,9 @@ with inventory_tab:
                             key=f"edit_cost_{edit_card['id']}",
                         )
                         edit_status = st.selectbox(
-                            "Status", ["Draft", "Ready", "Listed", "Sold"],
-                            index=["Draft", "Ready", "Listed", "Sold"].index(edit_card["status"])
-                            if edit_card["status"] in ["Draft", "Ready", "Listed", "Sold"] else 0,
+                            "Status", ["Draft", "Ready", "Listed", "Grading", "Sold"],
+                            index=["Draft", "Ready", "Listed", "Grading", "Sold"].index(edit_card["status"])
+                            if edit_card["status"] in ["Draft", "Ready", "Listed", "Grading", "Sold"] else 0,
                             key=f"edit_status_{edit_card['id']}",
                         )
                         edit_images = st.text_area(
@@ -546,6 +589,10 @@ with inventory_tab:
                             "card_name": edit_name.strip(),
                             "set_name": edit_set.strip(),
                             "card_number": edit_number.strip(),
+                            "condition": edit_condition,
+                            "grader": edit_grader,
+                            "grade": edit_grade.strip(),
+                            "certification_number": edit_certification.strip(),
                             "storage_location": edit_location.strip(),
                             "quantity": int(edit_quantity),
                             "cost": float(edit_cost),
@@ -565,7 +612,7 @@ with inventory_tab:
                 with bulk_right:
                     if st.checkbox("Change status"):
                         bulk_values["status"] = st.selectbox(
-                            "New status", ["Draft", "Ready", "Listed", "Sold"], key="bulk_status"
+                            "New status", ["Draft", "Ready", "Listed", "Grading", "Sold"], key="bulk_status"
                         )
                     if st.checkbox("Change quantity"):
                         bulk_values["quantity"] = int(st.number_input(
@@ -574,6 +621,95 @@ with inventory_tab:
                 if st.button("Apply bulk changes", disabled=not bulk_values):
                     database.update_cards(selected_ids, bulk_values)
                     st.rerun()
+
+                if len(selected_cards) == 1 and int(selected_cards[0]["quantity"]) > 0:
+                    sold_card = selected_cards[0]
+                    st.markdown("#### Mark as sold")
+                    st.caption(
+                        "Creates a permanent sales record, calculates profit, reduces quantity, "
+                        "and records the transaction in inventory history."
+                    )
+                    sale_row_1 = st.columns(4)
+                    sale_date = sale_row_1[0].date_input(
+                        "Sale date", key=f"sold_date_{sold_card['id']}"
+                    )
+                    marketplace = sale_row_1[1].selectbox(
+                        "Marketplace", ["eBay", "Whatnot", "Facebook", "Card show", "Direct", "Other"],
+                        key=f"sold_marketplace_{sold_card['id']}",
+                    )
+                    sale_quantity = int(sale_row_1[2].number_input(
+                        "Quantity sold", min_value=1, max_value=int(sold_card["quantity"]),
+                        value=1, step=1, key=f"sold_quantity_{sold_card['id']}",
+                    ))
+                    buyer = sale_row_1[3].text_input("Buyer", key=f"sold_buyer_{sold_card['id']}")
+                    sale_row_2 = st.columns(4)
+                    sale_price = sale_row_2[0].number_input(
+                        "Item sale price", min_value=0.0, format="%.2f",
+                        key=f"sold_price_{sold_card['id']}",
+                    )
+                    shipping_charged = sale_row_2[1].number_input(
+                        "Shipping charged", min_value=0.0, format="%.2f",
+                        key=f"sold_shipping_charged_{sold_card['id']}",
+                    )
+                    fees = sale_row_2[2].number_input(
+                        "Platform fees", min_value=0.0, format="%.2f",
+                        key=f"sold_fees_{sold_card['id']}",
+                    )
+                    promoted_fees = sale_row_2[3].number_input(
+                        "Promoted listing fees", min_value=0.0, format="%.2f",
+                        key=f"sold_promoted_{sold_card['id']}",
+                    )
+                    sale_row_3 = st.columns(4)
+                    label_cost = sale_row_3[0].number_input(
+                        "Shipping label cost", min_value=0.0, format="%.2f",
+                        key=f"sold_label_{sold_card['id']}",
+                    )
+                    tax_collected = sale_row_3[1].number_input(
+                        "Tax collected", min_value=0.0, format="%.2f",
+                        key=f"sold_tax_{sold_card['id']}",
+                    )
+                    order_number = sale_row_3[2].text_input(
+                        "Order number", key=f"sold_order_{sold_card['id']}"
+                    )
+                    item_id = sale_row_3[3].text_input(
+                        "Marketplace item ID", value=sold_card.get("ebay_item_id", ""),
+                        key=f"sold_item_id_{sold_card['id']}",
+                    )
+                    sale_notes = st.text_area("Sale notes", key=f"sold_notes_{sold_card['id']}")
+                    estimated_net = sale_price + shipping_charged - fees - promoted_fees - label_cost
+                    estimated_cogs = float(sold_card["cost"] or 0) * sale_quantity
+                    st.caption(
+                        f"Estimated net: ${estimated_net:,.2f} · "
+                        f"COGS: ${estimated_cogs:,.2f} · "
+                        f"Profit: ${estimated_net - estimated_cogs:,.2f}"
+                    )
+                    confirm_sale = st.checkbox(
+                        "Confirm this sale and reduce inventory",
+                        key=f"sold_confirm_{sold_card['id']}",
+                    )
+                    if st.button(
+                        "Complete sale", disabled=not confirm_sale,
+                        type="primary", key=f"sold_submit_{sold_card['id']}",
+                    ):
+                        database.create_manual_sale(int(sold_card["id"]), {
+                            "sale_date": sale_date.isoformat(),
+                            "marketplace": marketplace,
+                            "order_number": order_number.strip(),
+                            "item_id": item_id.strip(),
+                            "title": sold_card["card_name"],
+                            "quantity": sale_quantity,
+                            "item_subtotal": round(sale_price, 2),
+                            "shipping_charged": round(shipping_charged, 2),
+                            "fees": round(fees, 2),
+                            "shipping_label_cost": round(label_cost, 2),
+                            "buyer": buyer.strip(),
+                            "tax_collected": round(tax_collected, 2),
+                            "promoted_listing_fees": round(promoted_fees, 2),
+                            "status": "Completed",
+                            "notes": sale_notes.strip(),
+                        })
+                        st.success("Sale recorded and inventory updated.")
+                        st.rerun()
 
                 st.markdown("#### Delete")
                 confirm_delete = st.checkbox(

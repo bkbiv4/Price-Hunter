@@ -1,13 +1,39 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+import database
 from business_imports import equal_card_allocations
 from ebay import EbayConfig, listing_payloads
+from grading import grading_opportunity
+from sales import packing_slip_text
 from listings import build_description, build_title, suggested_price
 from scp_import import collection_row_to_card, import_identity
 from sportscardspro import available_prices, build_card_search_query, inventory_grade_prices, matches_parallel, matches_terms, product_price_row
 
 
 class ListingRulesTests(unittest.TestCase):
+    def test_grading_opportunity_calculates_break_even_and_expected_profit(self):
+        result = grading_opportunity(
+            {
+                "id": 1,
+                "sku": "PH-1",
+                "card_name": "Test",
+                "quantity": 1,
+                "cost": 10,
+                "market_price": 20,
+                "graded_8_price": 30,
+                "graded_9_price": 60,
+                "psa_10_price": 120,
+            },
+            grading_cost=20,
+            selling_cost_rate=0.10,
+            grade_probabilities={"8 / 8.5": 0.2, "9": 0.5, "10": 0.3},
+        )
+        self.assertEqual(result["break_even_grade"], "9")
+        self.assertEqual(result["expected_value"], 72.0)
+        self.assertEqual(result["expected_profit"], 34.8)
+
     def test_title_is_limited_to_80_characters(self):
         title = build_title("A" * 70, "B" * 30, "PSA 10")
         self.assertLessEqual(len(title), 80)
@@ -86,6 +112,151 @@ class ListingRulesTests(unittest.TestCase):
         self.assertTrue(matches_parallel("Walker Kessler [Red Mojo] #250", "Red"))
         self.assertTrue(matches_parallel("Jaime Jaquez Jr. [Choice Red] #213", "Red"))
         self.assertTrue(matches_parallel("Player [Alternate Art] #1", "Alternate Arts"))
+
+
+class InventoryWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_directory = TemporaryDirectory()
+        self.original_db_path = database.DB_PATH
+        database.DB_PATH = Path(self.temp_directory.name) / "test.db"
+        database.initialize()
+        self.card_id = database.add_card({
+            "card_name": "Test Player",
+            "set_name": "Test Set",
+            "quantity": 2,
+            "cost": 10.0,
+            "market_price": 20.0,
+            "graded_8_price": 30.0,
+            "graded_9_price": 50.0,
+            "psa_10_price": 100.0,
+        })
+
+    def tearDown(self):
+        database.DB_PATH = self.original_db_path
+        self.temp_directory.cleanup()
+
+    def test_manual_sale_reduces_quantity_and_records_profit_and_history(self):
+        sale_id = database.create_manual_sale(self.card_id, {
+            "sale_date": "2026-07-27",
+            "marketplace": "eBay",
+            "title": "Test Player",
+            "quantity": 1,
+            "item_subtotal": 50.0,
+            "shipping_charged": 5.0,
+            "fees": 7.0,
+            "promoted_listing_fees": 2.0,
+            "shipping_label_cost": 4.0,
+        })
+        card = database.get_card(self.card_id)
+        sale = next(row for row in database.all_sales() if row["id"] == sale_id)
+        self.assertEqual(card["quantity"], 1)
+        self.assertEqual((sale["net_amount"], sale["cost_of_goods"], sale["profit"]), (42.0, 10.0, 32.0))
+        self.assertEqual(database.inventory_events(self.card_id)[0]["event_type"], "Sold")
+
+    def test_returned_grade_updates_cost_market_value_and_history(self):
+        submission_id = database.create_grading_submission(
+            {
+                "submission_number": "PSA-1",
+                "grader": "PSA",
+                "status": "Submitted",
+                "grading_fee": 20.0,
+                "shipping_cost": 4.0,
+                "insurance_cost": 0.0,
+                "other_cost": 0.0,
+            },
+            [{"card_id": self.card_id, "quantity": 1}],
+        )
+        item = database.grading_items(submission_id)[0]
+        database.update_grading_submission(
+            submission_id,
+            "Returned",
+            "2026-07-27",
+            [{"item_id": item["id"], "grade": "10", "certification_number": "123"}],
+        )
+        card = database.get_card(self.card_id)
+        self.assertEqual((card["condition"], card["grader"], card["grade"]), ("Graded", "PSA", "10"))
+        self.assertEqual((card["cost"], card["market_price"]), (34.0, 100.0))
+        self.assertEqual(database.inventory_events(self.card_id)[0]["event_type"], "Grade received")
+        database.update_grading_submission(
+            submission_id,
+            "Returned",
+            "2026-07-27",
+            [{"item_id": item["id"], "grade": "10", "certification_number": "123"}],
+        )
+        self.assertEqual(database.get_card(self.card_id)["cost"], 34.0)
+
+    def test_lot_sale_and_return_restore_inventory_only_once(self):
+        second_card_id = database.add_card({
+            "card_name": "Second Card",
+            "set_name": "Test Set",
+            "quantity": 1,
+            "cost": 5.0,
+        })
+        sale_id = database.create_multi_card_sale(
+            {
+                "sale_date": "2026-07-27",
+                "marketplace": "Direct",
+                "shipping_charged": 5.0,
+                "fees": 3.0,
+                "promoted_listing_fees": 0.0,
+                "shipping_label_cost": 4.0,
+                "status": "Completed",
+            },
+            [
+                {"card_id": self.card_id, "quantity": 1, "unit_price": 30.0},
+                {"card_id": second_card_id, "quantity": 1, "unit_price": 20.0},
+            ],
+        )
+        self.assertEqual(database.get_card(self.card_id)["quantity"], 1)
+        self.assertEqual(database.get_card(second_card_id)["quantity"], 0)
+        database.update_sale_adjustment(
+            sale_id, "Returned", 55.0, 0.0, 6.0, "Returned lot", True
+        )
+        self.assertEqual(database.get_card(self.card_id)["quantity"], 2)
+        self.assertEqual(database.get_card(second_card_id)["quantity"], 1)
+        database.update_sale_adjustment(
+            sale_id, "Returned", 55.0, 0.0, 6.0, "Returned lot", True
+        )
+        self.assertEqual(database.get_card(self.card_id)["quantity"], 2)
+        sale = next(row for row in database.all_sales() if row["id"] == sale_id)
+        self.assertEqual(sale["cost_of_goods"], 0.0)
+        self.assertTrue(sale["inventory_restored"])
+
+    def test_packing_slip_lists_every_sale_item(self):
+        text = packing_slip_text(
+            {"id": 1, "sale_date": "2026-07-27", "marketplace": "Direct"},
+            [
+                {"quantity": 1, "card_name": "First", "card_sku": "PH-1"},
+                {"quantity": 2, "card_name": "Second", "card_sku": "PH-2"},
+            ],
+        )
+        self.assertIn("1 x First [PH-1]", text)
+        self.assertIn("2 x Second [PH-2]", text)
+
+    def test_ebay_sale_automatically_matches_unique_inventory_sku(self):
+        card = database.get_card(self.card_id)
+        database.import_sales([{
+            "source_key": "ebay-order-1",
+            "sale_date": "2026-07-27",
+            "marketplace": "eBay",
+            "order_number": "ORDER-1",
+            "item_id": "",
+            "sku": card["sku"],
+            "title": "Test Player",
+            "quantity": 1,
+            "item_subtotal": 50.0,
+            "shipping_charged": 0.0,
+            "fees": 5.0,
+            "shipping_label_cost": 4.0,
+            "net_amount": 41.0,
+        }])
+        result = database.auto_match_ebay_sales()
+        sale = database.all_sales()[0]
+        self.assertEqual(result["matched"], 1)
+        self.assertEqual(sale["card_id"], self.card_id)
+        self.assertEqual((sale["cost_of_goods"], sale["profit"]), (10.0, 31.0))
+        self.assertEqual(database.get_card(self.card_id)["quantity"], 2)
+        self.assertEqual(database.auto_match_ebay_sales()["matched"], 0)
 
     def test_equal_card_allocation_reconciles_to_the_cent(self):
         allocations = equal_card_allocations(

@@ -178,6 +178,7 @@ def read_ebay_workbook(source: Any) -> tuple[list[dict[str, Any]], list[str]]:
             "marketplace": "eBay",
             "order_number": order_number,
             "item_id": item_id,
+            "sku": _text(raw.get("Custom label")),
             "title": _text(raw.get("Item title")),
             "quantity": max(1, _integer(raw.get("Quantity"), 1)),
             "item_subtotal": round(_number(raw.get("Item subtotal")) or 0.0, 2),

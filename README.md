@@ -16,6 +16,13 @@ Price Hunter is a local Python app for organizing sports-card inventory and prep
 - Row-based inventory editing, deletion, and bulk location/status/set/quantity changes
 - Multi-card listing queues, bulk draft generation, and selected-card background price refresh
 - Sales-to-inventory matching with cost of goods, monthly reporting, and profit
+- Automatic high-confidence eBay sale matching by item ID or Custom label / Price Hunter SKU
+- Filterable sales dashboard with revenue, refunds, selling costs, COGS, margin, marketplace performance, and profit rankings
+- Multi-card grading submissions with fee allocation, progress tracking, returned grades, and certification numbers
+- Grading opportunity rankings with break-even grade, PSA 8/9/10 profit, expected profit, and CSV export
+- Completed-sale workflow with automatic quantity reduction, net proceeds, COGS, and profit
+- Multi-card lot sales, partial refunds, returns, cancellations, one-time inventory restoration, and packing slips
+- Inventory activity history for acquisitions, edits, grading, sales, and deletions
 - Sandbox-first eBay OAuth/Inventory API connection, offer creation, and confirmed publishing
 - Manual entry when the API is unavailable
 - Local SQLite inventory with generated SKUs
