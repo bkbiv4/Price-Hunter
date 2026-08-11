@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 import re
+import unicodedata
 from typing import Any
 
 import requests
@@ -16,6 +17,7 @@ class SportsCardsProError(RuntimeError):
 
 class SportsCardsProClient:
     BASE_URL = "https://www.sportscardspro.com/api"
+    POKEMON_BASE_URL = "https://www.pricecharting.com/api"
     _lock = threading.Lock()
     _last_request_at = 0.0
 
@@ -25,14 +27,14 @@ class SportsCardsProClient:
         self.token = token.strip()
         self.timeout = timeout
 
-    def _get(self, path: str, **params: str) -> dict[str, Any]:
+    def _get(self, path: str, *, base_url: str | None = None, **params: str) -> dict[str, Any]:
         # SportsCardsPro permits no more than one request per second.
         with self._lock:
             elapsed = time.monotonic() - self._last_request_at
             if elapsed < 1.05:
                 time.sleep(1.05 - elapsed)
             response = requests.get(
-                f"{self.BASE_URL}/{path}",
+                f"{base_url or self.BASE_URL}/{path}",
                 params={"t": self.token, **params},
                 timeout=self.timeout,
             )
@@ -50,6 +52,11 @@ class SportsCardsProClient:
 
     def search(self, query: str) -> list[dict[str, Any]]:
         data = self._get("products", q=query.strip())
+        return list(data.get("products", []))
+
+    def search_pokemon(self, query: str) -> list[dict[str, Any]]:
+        """Search the PriceCharting catalog, which contains Pokemon products."""
+        data = self._get("products", base_url=self.POKEMON_BASE_URL, q=query.strip())
         return list(data.get("products", []))
 
     def product(self, product_id: str) -> dict[str, Any]:
@@ -118,6 +125,37 @@ def matches_parallel(card_name: Any, terms: str) -> bool:
 def build_card_search_query(*parts: Any) -> str:
     """Build an API search query from independently entered card details."""
     return " ".join(str(part).strip() for part in parts if str(part or "").strip())
+
+
+def _identity_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+
+
+def _product_identity(name: Any, set_name: Any, card_number: Any = "") -> tuple[str, str, str, str]:
+    product_name = str(name or "").strip()
+    variants = re.findall(r"\[([^]]+)]", product_name)
+    variant = variants[-1] if variants else ""
+    number_match = re.search(r"#([^\s]+)\s*$", product_name)
+    number = str(card_number or (number_match.group(1) if number_match else "")).split("/", 1)[0]
+    if number.isdigit():
+        number = str(int(number))
+    base_name = re.sub(r"\s+#([^\s]+)\s*$", "", product_name)
+    base_name = re.sub(r"\s*\[[^]]+]", "", base_name).strip()
+    return (
+        _identity_text(set_name), _identity_text(base_name),
+        _identity_text(number), _identity_text(variant),
+    )
+
+
+def select_product_match(card: dict[str, Any], products: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return only an exact set/name/number/variant SportsCardsPro match."""
+    target = _product_identity(card.get("card_name"), card.get("set_name"), card.get("card_number"))
+    matches = [
+        product for product in products
+        if _product_identity(product.get("product-name"), product.get("console-name")) == target
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def product_price_row(product: dict[str, Any]) -> dict[str, Any]:

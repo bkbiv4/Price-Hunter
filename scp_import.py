@@ -38,6 +38,20 @@ def _quantity(value: Any) -> int:
         return 1
 
 
+def collection_type(set_name: Any) -> str:
+    """Return the broad inventory type encoded in a SportsCardsPro set name."""
+    name = _text(set_name)
+    if not name:
+        return ""
+    if name.casefold().startswith("one piece ") or name.casefold() == "one piece":
+        return "One Piece"
+    cards_marker = " cards "
+    marker_position = name.casefold().find(cards_marker)
+    if marker_position > 0:
+        return name[:marker_position].strip()
+    return name.split(maxsplit=1)[0]
+
+
 def _grade_details(include: str, grading_company: str) -> tuple[str, str, str]:
     if include.casefold() == "ungraded":
         return "Raw / Ungraded", "", ""

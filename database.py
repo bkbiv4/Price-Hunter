@@ -236,6 +236,9 @@ def initialize() -> None:
             db.execute("ALTER TABLE sales ADD COLUMN profit REAL")
         for column, definition in {
             "buyer": "TEXT NOT NULL DEFAULT ''",
+            "payment_method": "TEXT NOT NULL DEFAULT ''",
+            "cash_received": "REAL NOT NULL DEFAULT 0",
+            "trade_value": "REAL NOT NULL DEFAULT 0",
             "tax_collected": "REAL NOT NULL DEFAULT 0",
             "promoted_listing_fees": "REAL NOT NULL DEFAULT 0",
             "status": "TEXT NOT NULL DEFAULT 'Completed'",
@@ -413,6 +416,15 @@ def update_grade_prices(item_id: int, values: dict[str, Any]) -> None:
         )
 
 
+def update_scp_id(item_id: int, scp_id: str) -> None:
+    """Save a resolved SportsCardsPro ID without creating a noisy inventory edit event."""
+    with connection() as db:
+        db.execute(
+            "UPDATE cards SET scp_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (str(scp_id), item_id),
+        )
+
+
 def _insert_many_ignore(table: str, rows: list[dict[str, Any]]) -> int:
     if not rows:
         return 0
@@ -435,6 +447,68 @@ def import_purchases(rows: list[dict[str, Any]]) -> int:
 
 def import_expenses(rows: list[dict[str, Any]]) -> int:
     return _insert_many_ignore("expenses", rows)
+
+
+def add_purchase(values: dict[str, Any]) -> int:
+    """Create one manually entered purchase and return its ID."""
+    allowed = {
+        "purchase_date", "description", "category", "set_name", "quantity",
+        "cards_expected", "vendor", "purchase_price", "shipping", "tax",
+        "total_cost", "payment_account", "receipt_ref", "notes", "status",
+    }
+    row = {column: value for column, value in values.items() if column in allowed}
+    if not str(row.get("description", "")).strip():
+        raise ValueError("Purchase description is required.")
+    with connection() as db:
+        columns = ", ".join(row)
+        placeholders = ", ".join("?" for _ in row)
+        cursor = db.execute(
+            f"INSERT INTO purchases ({columns}) VALUES ({placeholders})",
+            tuple(row.values()),
+        )
+        return int(cursor.lastrowid)
+
+
+def add_expense(values: dict[str, Any]) -> int:
+    """Create one manually entered expense and return its ID."""
+    allowed = {
+        "expense_date", "vendor", "description", "quantity", "category",
+        "amount", "tax", "shipping", "total", "payment_account",
+        "receipt_ref", "notes",
+    }
+    row = {column: value for column, value in values.items() if column in allowed}
+    if not str(row.get("description", "")).strip():
+        raise ValueError("Expense description is required.")
+    with connection() as db:
+        columns = ", ".join(row)
+        placeholders = ", ".join("?" for _ in row)
+        cursor = db.execute(
+            f"INSERT INTO expenses ({columns}) VALUES ({placeholders})",
+            tuple(row.values()),
+        )
+        return int(cursor.lastrowid)
+
+
+def update_purchase(purchase_id: int, values: dict[str, Any]) -> None:
+    """Update the editable fields of an existing purchase."""
+    allowed = {
+        "purchase_date", "description", "category", "set_name", "quantity",
+        "cards_expected", "vendor", "purchase_price", "shipping", "tax",
+        "total_cost", "payment_account", "receipt_ref", "notes",
+    }
+    row = {column: value for column, value in values.items() if column in allowed}
+    if not str(row.get("description", "")).strip():
+        raise ValueError("Purchase description is required.")
+    if not row:
+        return
+    assignments = ", ".join(f"{column} = ?" for column in row)
+    with connection() as db:
+        cursor = db.execute(
+            f"UPDATE purchases SET {assignments} WHERE id = ?",
+            (*row.values(), purchase_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("Purchase was not found.")
 
 
 def import_sales(rows: list[dict[str, Any]]) -> int:
@@ -477,6 +551,77 @@ def all_sales() -> list[dict[str, Any]]:
     with connection() as db:
         rows = db.execute("SELECT * FROM sales ORDER BY sale_date DESC, id DESC").fetchall()
     return [dict(row) for row in rows]
+
+
+def update_sale(sale_id: int, values: dict[str, Any]) -> None:
+    """Update sale details and recalculate net proceeds and profit."""
+    allowed = {
+        "sale_date", "marketplace", "order_number", "item_id", "sku", "title",
+        "buyer", "payment_method", "cash_received", "trade_value", "item_subtotal",
+        "shipping_charged", "tax_collected", "fees", "promoted_listing_fees",
+        "shipping_label_cost", "notes",
+    }
+    edits = {column: value for column, value in values.items() if column in allowed}
+    if not str(edits.get("title", "")).strip():
+        raise ValueError("Sale title is required.")
+    with connection() as db:
+        current = db.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
+        if not current:
+            raise ValueError("Sale was not found.")
+        merged = {**dict(current), **edits}
+        base_net = round(
+            float(merged.get("item_subtotal") or 0)
+            + float(merged.get("shipping_charged") or 0)
+            - float(merged.get("fees") or 0)
+            - float(merged.get("promoted_listing_fees") or 0)
+            - float(merged.get("shipping_label_cost") or 0),
+            2,
+        )
+        adjusted_net = round(
+            base_net
+            - float(merged.get("refunded_amount") or 0)
+            - float(merged.get("additional_expenses") or 0)
+            - float(merged.get("return_shipping_cost") or 0),
+            2,
+        )
+        cost_of_goods = merged.get("cost_of_goods")
+        profit = round(adjusted_net - float(cost_of_goods), 2) if cost_of_goods is not None else None
+        edits.update({"gross_net_amount": base_net, "net_amount": adjusted_net, "profit": profit})
+        assignments = ", ".join(f"{column} = ?" for column in edits)
+        db.execute(
+            f"UPDATE sales SET {assignments} WHERE id = ?",
+            (*edits.values(), sale_id),
+        )
+
+
+def delete_sale(sale_id: int, restore_inventory: bool = False) -> None:
+    """Delete a sale, optionally restoring its sale-item quantities to inventory."""
+    with connection() as db:
+        sale = db.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
+        if not sale:
+            raise ValueError("Sale was not found.")
+        if restore_inventory and not bool(sale["inventory_restored"]):
+            items = db.execute(
+                "SELECT * FROM sale_items WHERE sale_id = ?", (sale_id,)
+            ).fetchall()
+            for item in items:
+                if item["card_id"] is None:
+                    continue
+                card = db.execute("SELECT * FROM cards WHERE id = ?", (item["card_id"],)).fetchone()
+                if not card:
+                    continue
+                db.execute(
+                    """
+                    UPDATE cards SET quantity = quantity + ?, status = 'Ready',
+                        updated_at = CURRENT_TIMESTAMP WHERE id = ?
+                    """,
+                    (int(item["quantity"]), item["card_id"]),
+                )
+                _record_event(
+                    db, int(item["card_id"]), "Sale deleted - inventory restored",
+                    f"Deleted sale #{sale_id}", int(item["quantity"]),
+                )
+        db.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
 
 
 def link_sale_to_card(sale_id: int, card_id: int, reduce_inventory: bool = True) -> None:
@@ -619,7 +764,9 @@ def create_manual_sale(card_id: int, values: dict[str, Any]) -> int:
         )
         _record_event(
             db, card_id, "Sold",
-            f"{values.get('marketplace', 'Other')} sale; net ${net_amount:.2f}; profit ${profit:.2f}",
+            f"{values.get('marketplace', 'Other')} sale; "
+            f"payment {values.get('payment_method', 'Unspecified')}; "
+            f"net ${net_amount:.2f}; profit ${profit:.2f}",
             -sold_quantity, net_amount, "sale", sale_id,
         )
         return sale_id

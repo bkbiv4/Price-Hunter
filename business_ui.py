@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ import streamlit as st
 
 import database
 from grading import grading_opportunity
+from receipt_scanner import allocate_receipt_amount, scan_receipt_image, scan_receipt_pdf
 from sales import packing_slip_text
 from business_imports import (
     equal_card_allocations,
@@ -66,8 +68,9 @@ def _preview_import(
     reader: Any,
     importer: Any,
     button_label: str,
+    file_types: str | list[str] = "xlsx",
 ) -> None:
-    upload = st.file_uploader(label, type="xlsx", key=uploader_key)
+    upload = st.file_uploader(label, type=file_types, key=uploader_key)
     if not upload:
         return
     rows, errors = reader(upload)
@@ -97,20 +100,411 @@ def render_purchases() -> None:
             database.import_purchases,
             "Import purchases",
         )
+    with st.expander("Scan purchase receipt", expanded=True):
+        purchase_receipt_upload = st.file_uploader(
+            "Purchase receipt PDF or photo",
+            type=["pdf", "jpg", "jpeg", "png", "webp", "heic", "heif"],
+            key="purchase_receipt_scanner",
+        )
+        st.caption(
+            "Supports text PDFs and receipt photos, including iPhone HEIC. "
+            "Review every detected value before adding the purchase."
+        )
+        if st.button(
+            "Scan and prefill purchase", disabled=purchase_receipt_upload is None,
+            key="scan_purchase_receipt",
+        ):
+            try:
+                if purchase_receipt_upload.name.casefold().endswith(".pdf"):
+                    scanned_purchase = scan_receipt_pdf(
+                        purchase_receipt_upload.getvalue(), purchase_receipt_upload.name
+                    )
+                else:
+                    scanned_purchase = scan_receipt_image(
+                        purchase_receipt_upload.getvalue(), purchase_receipt_upload.name
+                    )
+                if scanned_purchase.get("expense_date"):
+                    scanned_date = pd.to_datetime(scanned_purchase["expense_date"], errors="coerce")
+                    if not pd.isna(scanned_date):
+                        st.session_state.purchase_add_date = scanned_date.date()
+                purchase_prefill = {
+                    "vendor": scanned_purchase["vendor"],
+                    "description": scanned_purchase["description"],
+                    "category": scanned_purchase["category"],
+                    "quantity": max(
+                        1,
+                        sum(
+                            int(item.get("quantity") or 1)
+                            for item in scanned_purchase.get("line_items", [])
+                        ) or int(scanned_purchase["quantity"]),
+                    ),
+                    "purchase_price": round(
+                        float(scanned_purchase["amount"]) * int(scanned_purchase["quantity"]), 2
+                    ),
+                    "shipping": float(scanned_purchase["shipping"]),
+                    "tax": float(scanned_purchase["tax"]),
+                    "payment_account": scanned_purchase["payment_account"],
+                    "receipt_ref": scanned_purchase["receipt_ref"],
+                    "notes": scanned_purchase["notes"],
+                }
+                for field, value in purchase_prefill.items():
+                    st.session_state[f"purchase_add_{field}"] = value
+                st.session_state.purchase_scan_items = scanned_purchase.get("line_items", [])
+                line_items = scanned_purchase.get("line_items", [])
+                if line_items:
+                    line_totals = [float(item["total"]) for item in line_items]
+                    allocated_shipping = allocate_receipt_amount(
+                        float(scanned_purchase["shipping"]), line_totals
+                    )
+                    allocated_tax = allocate_receipt_amount(float(scanned_purchase["tax"]), line_totals)
+                    scanned_rows = []
+                    for index, item in enumerate(line_items):
+                        identity = "|".join((
+                            str(scanned_purchase["receipt_ref"]), str(scanned_purchase["vendor"]),
+                            str(scanned_purchase["expense_date"]), str(index), str(item["description"]),
+                            str(item["total"]),
+                        ))
+                        line_total = round(float(item["total"]), 2)
+                        scanned_rows.append({
+                            "source_key": "receipt:" + hashlib.sha256(identity.encode("utf-8")).hexdigest(),
+                            "purchase_date": scanned_purchase["expense_date"],
+                            "description": str(item["description"]),
+                            "category": scanned_purchase["category"],
+                            "set_name": "",
+                            "quantity": int(item["quantity"]),
+                            "cards_expected": 0,
+                            "vendor": scanned_purchase["vendor"],
+                            "purchase_price": line_total,
+                            "shipping": allocated_shipping[index],
+                            "tax": allocated_tax[index],
+                            "total_cost": round(
+                                line_total + allocated_shipping[index] + allocated_tax[index], 2
+                            ),
+                            "payment_account": scanned_purchase["payment_account"],
+                            "receipt_ref": scanned_purchase["receipt_ref"],
+                            "notes": (
+                                f"{scanned_purchase['notes']}; detected unit price "
+                                f"${float(item['unit_price']):,.2f}"
+                            ),
+                            "status": "Unallocated",
+                        })
+                    st.session_state.purchase_scan_rows = scanned_rows
+                else:
+                    st.session_state.purchase_scan_rows = []
+                editor_identity = (
+                    f"{purchase_receipt_upload.name}|{scanned_purchase['receipt_ref']}|"
+                    f"{scanned_purchase['total']}"
+                )
+                st.session_state.purchase_scan_editor_token = hashlib.sha256(
+                    editor_identity.encode("utf-8")
+                ).hexdigest()[:12]
+                st.session_state.purchase_scan_message = (
+                    f"Detected ${scanned_purchase['total']:,.2f} from "
+                    f"{purchase_receipt_upload.name}. Review the prefilled form below."
+                )
+                st.rerun()
+            except (RuntimeError, ValueError) as exc:
+                st.error(str(exc))
+        if st.session_state.get("purchase_scan_message"):
+            st.success(st.session_state.purchase_scan_message)
+        if st.session_state.get("purchase_scan_items"):
+            st.markdown("#### Detected line items")
+            scanned_purchase_rows = st.session_state.get("purchase_scan_rows", [])
+            edited_purchase_lines = st.data_editor(
+                pd.DataFrame(scanned_purchase_rows)[
+                    ["description", "quantity", "purchase_price", "shipping", "tax"]
+                ],
+                use_container_width=True, hide_index=True, num_rows="dynamic",
+                key=(
+                    "purchase_scan_line_editor_"
+                    + st.session_state.get("purchase_scan_editor_token", "current")
+                ),
+                column_config={
+                    "description": st.column_config.TextColumn("Description", required=True),
+                    "quantity": st.column_config.NumberColumn(
+                        "Quantity", min_value=1, step=1, required=True
+                    ),
+                    "purchase_price": st.column_config.NumberColumn(
+                        "Line price", min_value=0.0, format="$%.2f", required=True
+                    ),
+                    "shipping": st.column_config.NumberColumn(
+                        "Allocated shipping", min_value=0.0, format="$%.2f", required=True
+                    ),
+                    "tax": st.column_config.NumberColumn(
+                        "Allocated tax", min_value=0.0, format="$%.2f", required=True
+                    ),
+                },
+            )
+            edited_landed_total = (
+                pd.to_numeric(edited_purchase_lines["purchase_price"], errors="coerce").fillna(0)
+                + pd.to_numeric(edited_purchase_lines["shipping"], errors="coerce").fillna(0)
+                + pd.to_numeric(edited_purchase_lines["tax"], errors="coerce").fillna(0)
+            ).sum()
+            st.caption(
+                f"Editable landed-cost total: ${edited_landed_total:,.2f}. "
+                "You may correct values, add missed lines, or remove false detections before importing."
+            )
+            confirm_line_purchases = st.checkbox(
+                "Confirm adding each detected line as a separate purchase",
+                key="confirm_scanned_line_purchases",
+            )
+            if st.button(
+                "Add detected lines as separate purchases",
+                disabled=not confirm_line_purchases or edited_purchase_lines.empty,
+                type="primary", key="add_scanned_line_purchases",
+            ):
+                template = scanned_purchase_rows[0]
+                corrected_rows = []
+                for index, edited_line in edited_purchase_lines.iterrows():
+                    description = str(edited_line.get("description") or "").strip()
+                    if not description:
+                        continue
+                    quantity = max(1, int(edited_line.get("quantity") or 1))
+                    line_price = round(float(edited_line.get("purchase_price") or 0), 2)
+                    line_shipping = round(float(edited_line.get("shipping") or 0), 2)
+                    line_tax = round(float(edited_line.get("tax") or 0), 2)
+                    purchase_date_value = st.session_state.get(
+                        "purchase_add_date", template["purchase_date"]
+                    )
+                    if hasattr(purchase_date_value, "isoformat"):
+                        purchase_date_value = purchase_date_value.isoformat()
+                    identity = "|".join((
+                        str(st.session_state.get("purchase_add_receipt_ref", template["receipt_ref"])),
+                        str(purchase_date_value), str(index), description,
+                        str(quantity), str(line_price),
+                    ))
+                    corrected_rows.append({
+                        **template,
+                        "source_key": "receipt:" + hashlib.sha256(identity.encode("utf-8")).hexdigest(),
+                        "purchase_date": str(purchase_date_value),
+                        "description": description,
+                        "category": str(st.session_state.get("purchase_add_category", template["category"])),
+                        "set_name": str(st.session_state.get("purchase_add_set_name", "")),
+                        "quantity": quantity,
+                        "vendor": str(st.session_state.get("purchase_add_vendor", template["vendor"])),
+                        "purchase_price": line_price,
+                        "shipping": line_shipping,
+                        "tax": line_tax,
+                        "total_cost": round(line_price + line_shipping + line_tax, 2),
+                        "payment_account": str(st.session_state.get(
+                            "purchase_add_payment_account", template["payment_account"]
+                        )),
+                        "receipt_ref": str(st.session_state.get(
+                            "purchase_add_receipt_ref", template["receipt_ref"]
+                        )),
+                        "notes": str(st.session_state.get("purchase_add_notes", template["notes"])),
+                    })
+                inserted = database.import_purchases(corrected_rows)
+                st.success(
+                    f"Added {inserted:,} separate purchase(s). Existing lines from this receipt were skipped."
+                )
+                st.session_state.pop("purchase_scan_message", None)
+                st.session_state.pop("purchase_scan_items", None)
+                st.session_state.pop("purchase_scan_rows", None)
+                st.session_state.pop("purchase_scan_editor_token", None)
+                st.rerun()
+    with st.expander("Add purchase", expanded=bool(st.session_state.get("purchase_scan_message"))):
+        with st.form("add_purchase_form", clear_on_submit=True):
+            first = st.columns(4)
+            purchase_date = first[0].date_input("Purchase date", key="purchase_add_date")
+            description = first[1].text_input("Description *", key="purchase_add_description")
+            category = first[2].text_input(
+                "Category", placeholder="Cards, sealed product…", key="purchase_add_category"
+            )
+            set_name = first[3].text_input("Set", key="purchase_add_set_name")
+            second = st.columns(4)
+            quantity = second[0].number_input(
+                "Quantity", min_value=1, value=1, step=1, key="purchase_add_quantity"
+            )
+            cards_expected = second[1].number_input(
+                "Card count", min_value=0, value=0, step=1,
+                help="Total number of individual cards included in this purchase.",
+                key="purchase_add_cards_expected",
+            )
+            vendor = second[2].text_input("Vendor", key="purchase_add_vendor")
+            payment_account = second[3].text_input(
+                "Payment account", key="purchase_add_payment_account"
+            )
+            third = st.columns(4)
+            purchase_price = third[0].number_input(
+                "Purchase price", min_value=0.0, format="%.2f", key="purchase_add_purchase_price"
+            )
+            shipping = third[1].number_input(
+                "Shipping", min_value=0.0, format="%.2f", key="purchase_add_shipping"
+            )
+            tax = third[2].number_input(
+                "Tax", min_value=0.0, format="%.2f", key="purchase_add_tax"
+            )
+            receipt_ref = third[3].text_input(
+                "Receipt reference", key="purchase_add_receipt_ref"
+            )
+            notes = st.text_area("Notes", key="purchase_add_notes")
+            submitted = st.form_submit_button("Add purchase", type="primary")
+        if submitted:
+            if not description.strip():
+                st.error("Description is required.")
+            else:
+                total_cost = round(float(purchase_price) + float(shipping) + float(tax), 2)
+                purchase_id = database.add_purchase({
+                    "purchase_date": purchase_date.isoformat(),
+                    "description": description.strip(), "category": category.strip(),
+                    "set_name": set_name.strip(), "quantity": int(quantity),
+                    "cards_expected": int(cards_expected), "vendor": vendor.strip(),
+                    "purchase_price": float(purchase_price), "shipping": float(shipping),
+                    "tax": float(tax), "total_cost": total_cost,
+                    "payment_account": payment_account.strip(), "receipt_ref": receipt_ref.strip(),
+                    "notes": notes.strip(), "status": "Unallocated",
+                })
+                st.success(f"Added purchase P-{purchase_id:05d} with landed cost ${total_cost:,.2f}.")
+                st.session_state.pop("purchase_scan_message", None)
+                st.session_state.pop("purchase_scan_items", None)
+                st.session_state.pop("purchase_scan_rows", None)
+                st.session_state.pop("purchase_scan_editor_token", None)
 
     purchases = database.all_purchases()
     if not purchases:
-        st.info("No purchases have been imported yet.")
+        st.info("No purchases have been added yet.")
         return
     frame = pd.DataFrame(purchases)
-    total = frame["total_cost"].sum()
-    allocated = int((frame["status"] == "Allocated").sum())
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Purchases", len(frame))
-    c2.metric("Landed cost", f"${total:,.2f}")
-    c3.metric("Allocated", f"{allocated:,} of {len(frame):,}")
+    with st.expander("Filter purchases", expanded=True):
+        filter_columns = st.columns(5)
+        purchase_search = filter_columns[0].text_input(
+            "Search", key="purchase_search", placeholder="Description, set, vendor…"
+        )
+        category_filter = filter_columns[1].multiselect(
+            "Category", sorted(value for value in frame["category"].dropna().unique() if value),
+            key="purchase_category_filter",
+        )
+        vendor_filter = filter_columns[2].multiselect(
+            "Vendor", sorted(value for value in frame["vendor"].dropna().unique() if value),
+            key="purchase_vendor_filter",
+        )
+        status_filter = filter_columns[3].multiselect(
+            "Status", sorted(value for value in frame["status"].dropna().unique() if value),
+            key="purchase_status_filter",
+        )
+        parsed_dates = pd.to_datetime(frame["purchase_date"], errors="coerce").dropna()
+        date_filter = filter_columns[4].date_input(
+            "Purchase date range",
+            value=(parsed_dates.min().date(), parsed_dates.max().date()),
+            key="purchase_date_filter",
+        ) if not parsed_dates.empty else ()
+
+    filtered_frame = frame.copy()
+    if purchase_search.strip():
+        search_columns = ["description", "set_name", "vendor", "receipt_ref", "notes"]
+        matches = pd.Series(False, index=filtered_frame.index)
+        for column in search_columns:
+            matches |= filtered_frame[column].fillna("").map(
+                lambda value: matches_terms(value, purchase_search)
+            )
+        filtered_frame = filtered_frame[matches]
+    if category_filter:
+        filtered_frame = filtered_frame[filtered_frame["category"].isin(category_filter)]
+    if vendor_filter:
+        filtered_frame = filtered_frame[filtered_frame["vendor"].isin(vendor_filter)]
+    if status_filter:
+        filtered_frame = filtered_frame[filtered_frame["status"].isin(status_filter)]
+    if len(date_filter) == 2:
+        purchase_dates = pd.to_datetime(filtered_frame["purchase_date"], errors="coerce").dt.date
+        filtered_frame = filtered_frame[
+            purchase_dates.between(date_filter[0], date_filter[1], inclusive="both")
+        ]
+
+    with st.expander("Edit purchase"):
+        if filtered_frame.empty:
+            st.info("No filtered purchases are available to edit.")
+        else:
+            purchase_choices = {
+                f"P-{int(row['id']):05d} — {row['description']}": row
+                for row in filtered_frame.to_dict("records")
+            }
+            selected_purchase_label = st.selectbox(
+                "Purchase to edit", purchase_choices, key="edit_purchase_selection"
+            )
+            selected_purchase = purchase_choices[selected_purchase_label]
+            selected_purchase_id = int(selected_purchase["id"])
+            parsed_purchase_date = pd.to_datetime(
+                selected_purchase.get("purchase_date"), errors="coerce"
+            )
+            edit_date_default = (
+                parsed_purchase_date.date() if not pd.isna(parsed_purchase_date)
+                else pd.Timestamp.today().date()
+            )
+            with st.form(f"edit_purchase_form_{selected_purchase_id}"):
+                edit_first = st.columns(4)
+                edit_date = edit_first[0].date_input("Purchase date", value=edit_date_default)
+                edit_description = edit_first[1].text_input(
+                    "Description *", value=str(selected_purchase.get("description") or "")
+                )
+                edit_category = edit_first[2].text_input(
+                    "Category", value=str(selected_purchase.get("category") or "")
+                )
+                edit_set = edit_first[3].text_input(
+                    "Set", value=str(selected_purchase.get("set_name") or "")
+                )
+                edit_second = st.columns(4)
+                edit_quantity = edit_second[0].number_input(
+                    "Quantity", min_value=1, value=max(1, int(selected_purchase.get("quantity") or 1)),
+                    step=1,
+                )
+                edit_card_count = edit_second[1].number_input(
+                    "Card count", min_value=0,
+                    value=max(0, int(selected_purchase.get("cards_expected") or 0)), step=1,
+                )
+                edit_vendor = edit_second[2].text_input(
+                    "Vendor", value=str(selected_purchase.get("vendor") or "")
+                )
+                edit_account = edit_second[3].text_input(
+                    "Payment account", value=str(selected_purchase.get("payment_account") or "")
+                )
+                edit_third = st.columns(4)
+                edit_price = edit_third[0].number_input(
+                    "Purchase price", min_value=0.0,
+                    value=float(selected_purchase.get("purchase_price") or 0), format="%.2f",
+                )
+                edit_shipping = edit_third[1].number_input(
+                    "Shipping", min_value=0.0,
+                    value=float(selected_purchase.get("shipping") or 0), format="%.2f",
+                )
+                edit_tax = edit_third[2].number_input(
+                    "Tax", min_value=0.0, value=float(selected_purchase.get("tax") or 0),
+                    format="%.2f",
+                )
+                edit_receipt = edit_third[3].text_input(
+                    "Receipt reference", value=str(selected_purchase.get("receipt_ref") or "")
+                )
+                edit_notes = st.text_area(
+                    "Notes", value=str(selected_purchase.get("notes") or "")
+                )
+                edit_submitted = st.form_submit_button("Save purchase changes", type="primary")
+            if edit_submitted:
+                if not edit_description.strip():
+                    st.error("Description is required.")
+                else:
+                    edited_total = round(float(edit_price) + float(edit_shipping) + float(edit_tax), 2)
+                    database.update_purchase(selected_purchase_id, {
+                        "purchase_date": edit_date.isoformat(),
+                        "description": edit_description.strip(), "category": edit_category.strip(),
+                        "set_name": edit_set.strip(), "quantity": int(edit_quantity),
+                        "cards_expected": int(edit_card_count), "vendor": edit_vendor.strip(),
+                        "purchase_price": float(edit_price), "shipping": float(edit_shipping),
+                        "tax": float(edit_tax), "total_cost": edited_total,
+                        "payment_account": edit_account.strip(), "receipt_ref": edit_receipt.strip(),
+                        "notes": edit_notes.strip(),
+                    })
+                    st.success(f"Updated purchase P-{selected_purchase_id:05d}.")
+                    st.rerun()
+    total = filtered_frame["total_cost"].sum()
+    card_count = int(filtered_frame["cards_expected"].fillna(0).sum())
+    allocated = int((filtered_frame["status"] == "Allocated").sum())
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Purchases", len(filtered_frame), f"{len(filtered_frame):,} of {len(frame):,}")
+    c2.metric("Card count", f"{card_count:,}")
+    c3.metric("Landed cost", f"${total:,.2f}")
+    c4.metric("Allocated", f"{allocated:,} of {len(filtered_frame):,}")
     st.dataframe(
-        frame[
+        filtered_frame[
             [
                 "purchase_date", "description", "category", "set_name", "quantity",
                 "cards_expected", "vendor", "purchase_price", "shipping", "tax",
@@ -120,8 +514,13 @@ def render_purchases() -> None:
         use_container_width=True,
         hide_index=True,
         column_config={
-            column: st.column_config.NumberColumn(column.replace("_", " ").title(), format="$%.2f")
-            for column in ["purchase_price", "shipping", "tax", "total_cost"]
+            "cards_expected": st.column_config.NumberColumn("Card count", format="%d"),
+            **{
+                column: st.column_config.NumberColumn(
+                    column.replace("_", " ").title(), format="$%.2f"
+                )
+                for column in ["purchase_price", "shipping", "tax", "total_cost"]
+            },
         },
     )
 
@@ -228,9 +627,105 @@ def render_expenses() -> None:
             database.import_expenses,
             "Import expenses",
         )
+    with st.expander("Scan receipt", expanded=True):
+        receipt_upload = st.file_uploader(
+            "Receipt PDF or photo",
+            type=["pdf", "jpg", "jpeg", "png", "webp", "heic", "heif"],
+            key="expense_receipt_scanner",
+        )
+        st.caption(
+            "Supports text PDFs and receipt photos, including iPhone HEIC. "
+            "Review every detected value before adding the expense."
+        )
+        if st.button("Scan and prefill expense", disabled=receipt_upload is None):
+            try:
+                if receipt_upload.name.casefold().endswith(".pdf"):
+                    scanned = scan_receipt_pdf(receipt_upload.getvalue(), receipt_upload.name)
+                else:
+                    scanned = scan_receipt_image(receipt_upload.getvalue(), receipt_upload.name)
+                if scanned.get("expense_date"):
+                    scanned_date = pd.to_datetime(scanned["expense_date"], errors="coerce")
+                    if not pd.isna(scanned_date):
+                        st.session_state.expense_add_date = scanned_date.date()
+                for field in (
+                    "vendor", "description", "category", "quantity", "amount", "tax",
+                    "shipping", "payment_account", "receipt_ref", "notes",
+                ):
+                    st.session_state[f"expense_add_{field}"] = scanned[field]
+                st.session_state.expense_scan_items = scanned.get("line_items", [])
+                st.session_state.expense_scan_message = (
+                    f"Detected ${scanned['total']:,.2f} from {receipt_upload.name}. "
+                    "Review the prefilled form below."
+                )
+                st.rerun()
+            except (RuntimeError, ValueError) as exc:
+                st.error(str(exc))
+        if st.session_state.get("expense_scan_message"):
+            st.success(st.session_state.expense_scan_message)
+        if st.session_state.get("expense_scan_items"):
+            st.markdown("#### Detected line items")
+            st.dataframe(
+                pd.DataFrame(st.session_state.expense_scan_items),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "unit_price": st.column_config.NumberColumn("Unit price", format="$%.2f"),
+                    "total": st.column_config.NumberColumn("Line total", format="$%.2f"),
+                },
+            )
+    with st.expander("Add expense", expanded=bool(st.session_state.get("expense_scan_message"))):
+        with st.form("add_expense_form", clear_on_submit=True):
+            first = st.columns(4)
+            expense_date = first[0].date_input("Expense date", key="expense_add_date")
+            vendor = first[1].text_input("Vendor", key="expense_add_vendor")
+            expense_description = first[2].text_input(
+                "Description *", key="expense_add_description"
+            )
+            expense_category = first[3].text_input(
+                "Category", placeholder="Supplies, fees…", key="expense_add_category"
+            )
+            second = st.columns(4)
+            expense_quantity = second[0].number_input(
+                "Quantity", min_value=1, value=1, step=1, key="expense_add_quantity"
+            )
+            amount = second[1].number_input(
+                "Amount per item", min_value=0.0, format="%.2f", key="expense_add_amount"
+            )
+            expense_tax = second[2].number_input(
+                "Tax", min_value=0.0, format="%.2f", key="expense_add_tax"
+            )
+            expense_shipping = second[3].number_input(
+                "Shipping", min_value=0.0, format="%.2f", key="expense_add_shipping"
+            )
+            third = st.columns(2)
+            expense_account = third[0].text_input(
+                "Payment account", key="expense_add_payment_account"
+            )
+            expense_receipt = third[1].text_input(
+                "Receipt reference", key="expense_add_receipt_ref"
+            )
+            expense_notes = st.text_area("Notes", key="expense_add_notes")
+            expense_submitted = st.form_submit_button("Add expense", type="primary")
+        if expense_submitted:
+            if not expense_description.strip():
+                st.error("Description is required.")
+            else:
+                expense_total = round(
+                    float(amount) * int(expense_quantity) + float(expense_tax) + float(expense_shipping), 2
+                )
+                expense_id = database.add_expense({
+                    "expense_date": expense_date.isoformat(), "vendor": vendor.strip(),
+                    "description": expense_description.strip(), "quantity": int(expense_quantity),
+                    "category": expense_category.strip(), "amount": float(amount),
+                    "tax": float(expense_tax), "shipping": float(expense_shipping),
+                    "total": expense_total, "payment_account": expense_account.strip(),
+                    "receipt_ref": expense_receipt.strip(), "notes": expense_notes.strip(),
+                })
+                st.success(f"Added expense E-{expense_id:05d} totaling ${expense_total:,.2f}.")
+                st.session_state.pop("expense_scan_message", None)
+                st.session_state.pop("expense_scan_items", None)
     expenses = database.all_expenses()
     if not expenses:
-        st.info("No expenses have been imported yet.")
+        st.info("No expenses have been added yet.")
         return
     frame = pd.DataFrame(expenses)
     c1, c2 = st.columns(2)
@@ -254,13 +749,14 @@ def render_expenses() -> None:
 
 def render_sales() -> None:
     st.subheader("Sales")
-    with st.expander("Import eBay transaction report"):
+    with st.expander("Import eBay sales report"):
         _preview_import(
             "ebay_workbook",
-            "2025 eBay Sales workbook",
+            "eBay transaction workbook, Listings Sales Report CSV, or All Orders CSV",
             read_ebay_workbook,
             database.import_sales,
             "Import eBay sales",
+            ["xlsx", "csv"],
         )
     with st.expander("Record a multi-card or lot sale"):
         available_cards = [
@@ -355,13 +851,145 @@ def render_sales() -> None:
     frame = pd.DataFrame(sales)
     frame["profit_calculated"] = frame["profit"].notna()
     monetary_columns = [
-        "item_subtotal", "shipping_charged", "fees", "promoted_listing_fees",
+        "item_subtotal", "cash_received", "trade_value", "shipping_charged", "fees", "promoted_listing_fees",
         "shipping_label_cost", "refunded_amount", "additional_expenses",
         "return_shipping_cost", "net_amount", "cost_of_goods", "profit",
     ]
     for column in monetary_columns:
         frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
     frame["sale_datetime"] = pd.to_datetime(frame["sale_date"], errors="coerce")
+
+    with st.expander("Edit sale"):
+        sale_choices = {
+            f"S-{int(sale['id']):05d} — {sale['sale_date']} — {sale['title']}": sale
+            for sale in sales
+        }
+        edit_sale_label = st.selectbox("Sale to edit", sale_choices, key="edit_sale_selection")
+        edit_sale = sale_choices[edit_sale_label]
+        edit_sale_id = int(edit_sale["id"])
+        parsed_sale_date = pd.to_datetime(edit_sale.get("sale_date"), errors="coerce")
+        edit_sale_date_default = (
+            parsed_sale_date.date() if not pd.isna(parsed_sale_date) else pd.Timestamp.today().date()
+        )
+        payment_options = ["", "Cash", "Trade-in value", "Cash + trade", "eBay managed payments", "Other"]
+        current_payment = str(edit_sale.get("payment_method") or "")
+        if current_payment not in payment_options:
+            payment_options.append(current_payment)
+        with st.form(f"edit_sale_form_{edit_sale_id}"):
+            edit_row_1 = st.columns(4)
+            edit_sale_date = edit_row_1[0].date_input("Sale date", value=edit_sale_date_default)
+            edit_marketplace = edit_row_1[1].text_input(
+                "Marketplace", value=str(edit_sale.get("marketplace") or "")
+            )
+            edit_order = edit_row_1[2].text_input(
+                "Order number", value=str(edit_sale.get("order_number") or "")
+            )
+            edit_item_id = edit_row_1[3].text_input(
+                "Marketplace item ID", value=str(edit_sale.get("item_id") or "")
+            )
+            edit_row_2 = st.columns(4)
+            edit_title = edit_row_2[0].text_input(
+                "Title *", value=str(edit_sale.get("title") or "")
+            )
+            edit_buyer = edit_row_2[1].text_input(
+                "Buyer", value=str(edit_sale.get("buyer") or "")
+            )
+            edit_sku = edit_row_2[2].text_input("SKU", value=str(edit_sale.get("sku") or ""))
+            edit_payment = edit_row_2[3].selectbox(
+                "Payment method", payment_options, index=payment_options.index(current_payment)
+            )
+            manual_consideration = edit_payment in {"Cash", "Trade-in value", "Cash + trade"}
+            edit_row_3 = st.columns(4)
+            edit_subtotal_input = edit_row_3[0].number_input(
+                "Item subtotal", min_value=0.0, value=float(edit_sale.get("item_subtotal") or 0),
+                format="%.2f", disabled=manual_consideration,
+            )
+            edit_cash = edit_row_3[1].number_input(
+                "Cash received", min_value=0.0, value=float(edit_sale.get("cash_received") or 0),
+                format="%.2f", disabled=edit_payment == "Trade-in value",
+            )
+            edit_trade = edit_row_3[2].number_input(
+                "Trade-in value", min_value=0.0, value=float(edit_sale.get("trade_value") or 0),
+                format="%.2f", disabled=edit_payment in {"", "Cash", "eBay managed payments", "Other"},
+            )
+            edit_tax = edit_row_3[3].number_input(
+                "Tax collected", min_value=0.0, value=float(edit_sale.get("tax_collected") or 0),
+                format="%.2f",
+            )
+            edit_row_4 = st.columns(4)
+            edit_shipping = edit_row_4[0].number_input(
+                "Shipping charged", min_value=0.0, value=float(edit_sale.get("shipping_charged") or 0),
+                format="%.2f",
+            )
+            edit_fees = edit_row_4[1].number_input(
+                "Platform fees", min_value=0.0, value=float(edit_sale.get("fees") or 0), format="%.2f"
+            )
+            edit_promoted = edit_row_4[2].number_input(
+                "Promoted fees", min_value=0.0,
+                value=float(edit_sale.get("promoted_listing_fees") or 0), format="%.2f",
+            )
+            edit_label = edit_row_4[3].number_input(
+                "Shipping label cost", min_value=0.0,
+                value=float(edit_sale.get("shipping_label_cost") or 0), format="%.2f",
+            )
+            edit_notes = st.text_area("Notes", value=str(edit_sale.get("notes") or ""))
+            st.caption("Editing a sale does not change inventory quantities or its linked inventory card.")
+            edit_sale_submitted = st.form_submit_button("Save sale changes", type="primary")
+        if edit_sale_submitted:
+            if not edit_title.strip():
+                st.error("Title is required.")
+            else:
+                effective_cash = 0.0 if edit_payment == "Trade-in value" else float(edit_cash)
+                effective_trade = float(edit_trade) if edit_payment in {"Trade-in value", "Cash + trade"} else 0.0
+                edited_subtotal = (
+                    effective_cash + effective_trade if manual_consideration else float(edit_subtotal_input)
+                )
+                database.update_sale(edit_sale_id, {
+                    "sale_date": edit_sale_date.isoformat(), "marketplace": edit_marketplace.strip(),
+                    "order_number": edit_order.strip(), "item_id": edit_item_id.strip(),
+                    "sku": edit_sku.strip(), "title": edit_title.strip(), "buyer": edit_buyer.strip(),
+                    "payment_method": edit_payment, "cash_received": round(effective_cash, 2),
+                    "trade_value": round(effective_trade, 2), "item_subtotal": round(edited_subtotal, 2),
+                    "shipping_charged": round(edit_shipping, 2), "tax_collected": round(edit_tax, 2),
+                    "fees": round(edit_fees, 2), "promoted_listing_fees": round(edit_promoted, 2),
+                    "shipping_label_cost": round(edit_label, 2), "notes": edit_notes.strip(),
+                })
+                st.success(f"Updated sale S-{edit_sale_id:05d}.")
+                st.rerun()
+
+        st.divider()
+        st.markdown("#### Delete sale")
+        st.caption(
+            "Delete sale only removes the sales record without changing inventory. "
+            "Delete and restore also returns linked sale-item quantities to inventory."
+        )
+        confirm_delete_sale = st.checkbox(
+            f"I understand S-{edit_sale_id:05d} — {edit_sale['title']} will be permanently deleted",
+            key=f"delete_sale_confirm_{edit_sale_id}",
+        )
+        delete_columns = st.columns(2)
+        delete_only = delete_columns[0].button(
+            "Delete sale only", disabled=not confirm_delete_sale,
+            key=f"delete_sale_only_{edit_sale_id}",
+            help="Permanently deletes the sale and leaves inventory unchanged.",
+        )
+        delete_and_restore = delete_columns[1].button(
+            "Delete sale + restore inventory",
+            disabled=not confirm_delete_sale or bool(edit_sale.get("inventory_restored")),
+            key=f"delete_sale_restore_{edit_sale_id}",
+            help=(
+                "Use only if this sale originally reduced inventory. Imported and automatically "
+                "matched sales normally did not reduce inventory."
+            ),
+        )
+        if delete_only:
+            database.delete_sale(edit_sale_id, restore_inventory=False)
+            st.success("Sale permanently deleted. Inventory was not changed.")
+            st.rerun()
+        if delete_and_restore:
+            database.delete_sale(edit_sale_id, restore_inventory=True)
+            st.success("Sale permanently deleted and linked item quantities restored to inventory.")
+            st.rerun()
 
     with st.expander("Dashboard filters", expanded=True):
         filter_columns = st.columns(3)
@@ -649,7 +1277,8 @@ def render_sales() -> None:
         frame[
             [
                 "sale_date", "marketplace", "order_number", "item_id", "sku", "title", "quantity",
-                "item_subtotal", "shipping_charged", "fees", "shipping_label_cost", "net_amount",
+                "payment_method", "cash_received", "trade_value", "item_subtotal",
+                "shipping_charged", "fees", "shipping_label_cost", "net_amount",
                 "refunded_amount", "additional_expenses", "return_shipping_cost",
                 "cost_of_goods", "profit", "status", "inventory_restored", "card_id",
             ]
@@ -659,7 +1288,7 @@ def render_sales() -> None:
         column_config={
             column: st.column_config.NumberColumn(column.replace("_", " ").title(), format="$%.2f")
             for column in [
-                "item_subtotal", "shipping_charged", "fees", "shipping_label_cost",
+                "cash_received", "trade_value", "item_subtotal", "shipping_charged", "fees", "shipping_label_cost",
                 "net_amount", "refunded_amount", "additional_expenses", "return_shipping_cost",
                 "cost_of_goods", "profit"
             ]

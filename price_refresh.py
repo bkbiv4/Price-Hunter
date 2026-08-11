@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 import database
-from sportscardspro import SportsCardsProClient, inventory_grade_prices
+from sportscardspro import (
+    SportsCardsProClient,
+    build_card_search_query,
+    inventory_grade_prices,
+    select_product_match,
+)
 
 
 _lock = threading.Lock()
@@ -89,24 +94,33 @@ def _worker(cards: list[dict[str, Any]], token: str) -> None:
             _status["current"] = f"{card.get('sku', '')} — {card.get('card_name', '')}"
 
         try:
-            product = client.product(card["scp_id"])
+            if card.get("scp_id"):
+                product = client.product(card["scp_id"])
+            else:
+                query = build_card_search_query(card.get("set_name"), card.get("card_name"))
+                search = (
+                    client.search_pokemon
+                    if str(card.get("set_name", "")).casefold().startswith("pokemon")
+                    else client.search
+                )
+                product = select_product_match(card, search(query))
+                if product is None:
+                    raise ValueError("No unique exact SportsCardsPro match was found.")
+                database.update_scp_id(card["id"], str(product["id"]))
             database.update_grade_prices(card["id"], inventory_grade_prices(product))
         except Exception as exc:
-            # Stop on the first error. Successful rows are already saved and a
-            # later resume retries this still-missing card.
             with _lock:
                 _status.update(
-                    state="error",
+                    processed=_status["processed"] + 1,
                     failed=_status["failed"] + 1,
-                    last_error=str(exc),
-                    current="",
-                    finished_at=_now(),
+                    last_error=f"{card.get('sku', '')}: {exc}",
                 )
-            return
+            continue
 
         with _lock:
             _status["processed"] += 1
             _status["succeeded"] += 1
 
     with _lock:
-        _status.update(state="completed", current="", finished_at=_now())
+        final_state = "completed_with_errors" if _status["failed"] else "completed"
+        _status.update(state=final_state, current="", finished_at=_now())

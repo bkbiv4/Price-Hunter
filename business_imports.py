@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import csv
+import io
 import math
+import re
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -149,6 +153,12 @@ def read_expense_workbook(source: Any) -> tuple[list[dict[str, Any]], list[str]]
 
 
 def read_ebay_workbook(source: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    source_name = str(getattr(source, "name", source)).casefold()
+    if source_name.endswith(".csv"):
+        text = _read_csv_text(source)
+        if "Sales Record Number" in text and "Order Number" in text:
+            return read_ebay_all_orders_csv(io.StringIO(text))
+        return read_ebay_listing_csv(io.StringIO(text))
     excel = pd.ExcelFile(source)
     report_sheet = next(
         (name for name in excel.sheet_names if name.startswith("Transaction_report_")),
@@ -188,6 +198,171 @@ def read_ebay_workbook(source: Any) -> tuple[list[dict[str, Any]], list[str]]:
             "net_amount": round(order_net - label_cost, 2),
         })
     return rows, []
+
+
+def _currency(value: Any) -> float:
+    text = _text(value).replace("$", "").replace(",", "")
+    if text.startswith("(") and text.endswith(")"):
+        text = f"-{text[1:-1]}"
+    return _number(text) or 0.0
+
+
+def _read_csv_text(source: Any) -> str:
+    if hasattr(source, "getvalue"):
+        raw = source.getvalue()
+    elif hasattr(source, "read"):
+        raw = source.read()
+    else:
+        raw = Path(source).read_bytes()
+    if isinstance(raw, str):
+        text = raw
+    else:
+        try:
+            return raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return raw.decode("cp1252")
+    return text
+
+
+def read_ebay_listing_csv(source: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """Read eBay's listing-level Sales Report CSV export."""
+    text = _read_csv_text(source)
+
+    csv_rows = list(csv.reader(io.StringIO(text)))
+    header_index = next(
+        (index for index, row in enumerate(csv_rows) if "Listing title" in row and "eBay item ID" in row),
+        None,
+    )
+    if header_index is None:
+        return [], ["No eBay listing sales header was found in the CSV."]
+    report_label = next(
+        (
+            ",".join(row).strip()
+            for row in reversed(csv_rows[:header_index])
+            if row and row[0].startswith("Report for ")
+        ),
+        "",
+    )
+    range_match = re.search(r"Report for (.+?) to (.+)$", report_label)
+    report_end = ""
+    if range_match:
+        try:
+            report_end = datetime.strptime(range_match.group(2), "%b %d, %Y").date().isoformat()
+        except ValueError:
+            pass
+
+    headers = [header.strip() for header in csv_rows[header_index]]
+    rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for row_number, values in enumerate(csv_rows[header_index + 1:], header_index + 2):
+        if not values or not any(value.strip() for value in values):
+            continue
+        if len(values) < len(headers) // 2:
+            continue
+        raw_row = dict(zip(headers, values))
+        title = _text(raw_row.get("Listing title"))
+        item_id = _text(raw_row.get("eBay item ID"))
+        if not title or not item_id:
+            errors.append(f"CSV row {row_number}: listing title or eBay item ID is missing.")
+            continue
+        item_sales = _currency(raw_row.get("Item sales"))
+        shipping_charged = _currency(raw_row.get("Shipping and handling paid by buyer to you"))
+        total_costs = _currency(raw_row.get("Total selling costs"))
+        label_cost = _currency(
+            raw_row.get("Shipping labels cost (Amount you paid to buy shipping labels on eBay)")
+        )
+        promoted_fees = (
+            _currency(raw_row.get("Promoted Listings - General fees"))
+            + _currency(raw_row.get("Promoted Listings - Priority fees"))
+        )
+        fees = max(0.0, total_costs - label_cost - promoted_fees)
+        net_sales = _currency(raw_row.get("Net sales (Net of taxes and selling costs)"))
+        quantity = max(1, _integer(raw_row.get("Quantity sold"), 1))
+        rows.append({
+            "source_key": _source_key("ebay-listing", report_label, item_id),
+            "sale_date": report_end,
+            "marketplace": "eBay",
+            "order_number": f"LISTING-{item_id}-{report_end}",
+            "item_id": item_id,
+            "sku": "",
+            "title": title,
+            "quantity": quantity,
+            "item_subtotal": round(item_sales, 2),
+            "shipping_charged": round(shipping_charged, 2),
+            "tax_collected": round(
+                _currency(raw_row.get("Taxes and government fees paid by buyer to you")), 2
+            ),
+            "fees": round(fees, 2),
+            "promoted_listing_fees": round(promoted_fees, 2),
+            "shipping_label_cost": round(label_cost, 2),
+            "net_amount": round(net_sales, 2),
+            "gross_net_amount": round(net_sales, 2),
+            "notes": f"Aggregated {report_label or 'eBay listing sales report'}",
+        })
+    return rows, errors
+
+
+def read_ebay_all_orders_csv(source: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """Read eBay's order-level All Orders Report CSV export."""
+    csv_rows = list(csv.reader(io.StringIO(_read_csv_text(source))))
+    header_index = next(
+        (
+            index for index, row in enumerate(csv_rows)
+            if "Sales Record Number" in row and "Order Number" in row and "Item Number" in row
+        ),
+        None,
+    )
+    if header_index is None:
+        return [], ["No eBay All Orders header was found in the CSV."]
+    headers = [header.strip() for header in csv_rows[header_index]]
+    rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for row_number, values in enumerate(csv_rows[header_index + 1:], header_index + 2):
+        if not values or not any(value.strip() for value in values):
+            continue
+        if len(values) < len(headers) // 2:
+            continue
+        raw_row = dict(zip(headers, values))
+        order_number = _text(raw_row.get("Order Number"))
+        item_id = _text(raw_row.get("Item Number"))
+        title = _text(raw_row.get("Item Title"))
+        if not order_number or not item_id or not title:
+            if _text(raw_row.get("Sales Record Number")).isdigit():
+                errors.append(f"CSV row {row_number}: order number, item number, or title is missing.")
+            continue
+        sale_date_text = _text(raw_row.get("Sale Date"))
+        try:
+            sale_date = datetime.strptime(sale_date_text, "%b-%d-%y").date().isoformat()
+        except ValueError:
+            sale_date = _date(sale_date_text)
+        item_subtotal = _currency(raw_row.get("Sold For"))
+        shipping_charged = _currency(raw_row.get("Shipping And Handling"))
+        tax_collected = _currency(raw_row.get("Seller Collected Tax"))
+        gross_amount = round(item_subtotal + shipping_charged, 2)
+        buyer = _text(raw_row.get("Buyer Name")) or _text(raw_row.get("Buyer Username"))
+        rows.append({
+            "source_key": _source_key("ebay", order_number, item_id, sale_date),
+            "sale_date": sale_date,
+            "marketplace": "eBay",
+            "order_number": order_number,
+            "item_id": item_id,
+            "sku": _text(raw_row.get("Custom Label")),
+            "title": title,
+            "buyer": buyer,
+            "quantity": max(1, _integer(raw_row.get("Quantity"), 1)),
+            "item_subtotal": round(item_subtotal, 2),
+            "shipping_charged": round(shipping_charged, 2),
+            "tax_collected": round(tax_collected, 2),
+            "fees": 0.0,
+            "promoted_listing_fees": 0.0,
+            "shipping_label_cost": 0.0,
+            "net_amount": gross_amount,
+            "gross_net_amount": gross_amount,
+            "payment_method": "eBay managed payments",
+            "status": "Completed",
+            "notes": "Imported from eBay All Orders report; fees and label costs are not included.",
+        })
+    return rows, errors
 
 
 def equal_card_allocations(

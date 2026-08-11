@@ -21,7 +21,7 @@ from business_ui import (
 )
 from ebay import EbayClient, EbayConfig, EbayError, listing_payloads
 from listings import build_description, build_title, suggested_price
-from scp_import import REQUIRED_COLUMNS, collection_row_to_card, import_identity
+from scp_import import REQUIRED_COLUMNS, collection_row_to_card, collection_type, import_identity
 from sportscardspro import (
     SportsCardsProClient,
     SportsCardsProError,
@@ -31,6 +31,11 @@ from sportscardspro import (
     matches_parallel,
     matches_terms,
     product_price_row,
+)
+from tcgcollector_import import (
+    REQUIRED_COLUMNS as TCGCOLLECTOR_REQUIRED_COLUMNS,
+    reconcile_collection_rows,
+    tcgcollector_row_to_card,
 )
 
 
@@ -369,6 +374,59 @@ with inventory_tab:
                 imported_count = database.add_cards(unique_rows)
                 st.success(f"Imported {imported_count:,} cards into Price Hunter.")
 
+    with st.expander("Import TCG Collector Pokemon CSV"):
+        st.write(
+            "Imports missing Pokemon cards and quantity differences. Existing matching cards are "
+            "recognized by set, card name, number, variant, and inventory condition."
+        )
+        tcg_file = st.file_uploader(
+            "TCG Collector collection export", type="csv", key="tcgcollector_collection_file"
+        )
+        if tcg_file is not None:
+            try:
+                tcg_frame = pd.read_csv(tcg_file, dtype=str, keep_default_na=False)
+                tcg_missing = TCGCOLLECTOR_REQUIRED_COLUMNS - set(tcg_frame.columns)
+                if tcg_missing:
+                    st.error(f"Missing required columns: {', '.join(sorted(tcg_missing))}")
+                else:
+                    tcg_rows = [
+                        tcgcollector_row_to_card(row) for row in tcg_frame.to_dict("records")
+                    ]
+                    tcg_additions, tcg_stats = reconcile_collection_rows(
+                        tcg_rows, database.all_cards()
+                    )
+                    st.write(
+                        f"Export: {tcg_stats['export_rows']:,} unique cards / "
+                        f"{tcg_stats['export_units']:,} copies. Existing inventory covers "
+                        f"{tcg_stats['covered_units']:,} copies. Ready to add "
+                        f"{tcg_stats['new_units']:,} copies across {tcg_stats['new_rows']:,} rows."
+                    )
+                    if tcg_additions:
+                        tcg_preview = pd.DataFrame(tcg_additions[:25])
+                        st.dataframe(
+                            tcg_preview[
+                                ["card_name", "set_name", "card_number", "quantity", "market_price", "notes"]
+                            ],
+                            use_container_width=True, hide_index=True,
+                            column_config={
+                                "market_price": st.column_config.NumberColumn(
+                                    "TCG Collector price", format="$%.2f"
+                                )
+                            },
+                        )
+                    if st.button(
+                        "Import missing Pokemon cards",
+                        disabled=not tcg_additions, type="primary", key="import_tcgcollector",
+                    ):
+                        imported_count = database.add_cards(tcg_additions)
+                        st.success(
+                            f"Imported {imported_count:,} inventory rows / "
+                            f"{tcg_stats['new_units']:,} physical cards."
+                        )
+                        st.rerun()
+            except Exception as exc:
+                st.error(f"Could not read TCG Collector export: {exc}")
+
     cards = database.all_cards()
     if not cards:
         st.info("Your inventory is empty. Use ‘Add a card’ to create the first item.")
@@ -376,14 +434,20 @@ with inventory_tab:
         frame = pd.DataFrame(cards)
 
         with st.expander("Filter inventory", expanded=True):
-            filter_row_1 = st.columns(4)
+            filter_row_1 = st.columns(5)
             with filter_row_1[0]:
-                name_filter = st.text_input("Player / card name", key="inventory_name_filter")
+                type_filter = st.multiselect(
+                    "Type",
+                    sorted({collection_type(value) for value in frame["set_name"] if collection_type(value)}),
+                    key="inventory_type_filter",
+                )
             with filter_row_1[1]:
-                year_filter = st.text_input("Year", key="inventory_year_filter")
+                name_filter = st.text_input("Player / card name", key="inventory_name_filter")
             with filter_row_1[2]:
-                brand_filter = st.text_input("Brand", key="inventory_brand_filter")
+                year_filter = st.text_input("Year", key="inventory_year_filter")
             with filter_row_1[3]:
+                brand_filter = st.text_input("Brand", key="inventory_brand_filter")
+            with filter_row_1[4]:
                 set_name_filter = st.text_input("Set", key="inventory_set_filter")
 
             filter_row_2 = st.columns(4)
@@ -404,24 +468,37 @@ with inventory_tab:
                     key="inventory_location_filter",
                 )
 
-            filter_row_3 = st.columns(4)
+            filter_row_3 = st.columns(5)
             with filter_row_3[0]:
+                price_basis_label = st.selectbox(
+                    "Price basis",
+                    ["Market / Raw", "Graded 8 / 8.5", "Graded 9", "PSA 10"],
+                    key="inventory_price_basis_filter",
+                )
+                price_basis_columns = {
+                    "Market / Raw": "market_price",
+                    "Graded 8 / 8.5": "graded_8_price",
+                    "Graded 9": "graded_9_price",
+                    "PSA 10": "psa_10_price",
+                }
+                price_basis_column = price_basis_columns[price_basis_label]
+            with filter_row_3[1]:
                 minimum_price = st.number_input(
-                    "Minimum market price", min_value=0.0, value=0.0,
+                    "Minimum price", min_value=0.0, value=0.0,
                     format="%.2f", key="inventory_min_price",
                 )
-            with filter_row_3[1]:
+            with filter_row_3[2]:
                 maximum_price = st.number_input(
-                    "Maximum market price", min_value=0.0, value=0.0,
+                    "Maximum price", min_value=0.0, value=0.0,
                     format="%.2f", help="Leave at 0 for no maximum.",
                     key="inventory_max_price",
                 )
-            with filter_row_3[2]:
+            with filter_row_3[3]:
                 price_coverage_filter = st.selectbox(
                     "Grading-price status", ["All", "Fetched", "Not fetched"],
                     key="inventory_price_coverage_filter",
                 )
-            with filter_row_3[3]:
+            with filter_row_3[4]:
                 status_filter = st.multiselect(
                     "Inventory status",
                     sorted(value for value in frame["status"].dropna().unique() if value),
@@ -434,6 +511,10 @@ with inventory_tab:
             return data[data[column].fillna("").map(lambda value: matches_terms(value, text))]
 
         filtered_frame = frame.copy()
+        if type_filter:
+            filtered_frame = filtered_frame[
+                filtered_frame["set_name"].map(collection_type).isin(type_filter)
+            ]
         filtered_frame = filter_text(filtered_frame, "card_name", name_filter)
         filtered_frame = filter_text(filtered_frame, "set_name", year_filter)
         filtered_frame = filter_text(filtered_frame, "set_name", brand_filter)
@@ -452,9 +533,13 @@ with inventory_tab:
         if status_filter:
             filtered_frame = filtered_frame[filtered_frame["status"].isin(status_filter)]
         if minimum_price:
-            filtered_frame = filtered_frame[filtered_frame["market_price"].fillna(0) >= minimum_price]
+            filtered_frame = filtered_frame[
+                filtered_frame[price_basis_column].fillna(0) >= minimum_price
+            ]
         if maximum_price:
-            filtered_frame = filtered_frame[filtered_frame["market_price"].fillna(0) <= maximum_price]
+            filtered_frame = filtered_frame[
+                filtered_frame[price_basis_column].fillna(0) <= maximum_price
+            ]
         if price_coverage_filter == "Fetched":
             filtered_frame = filtered_frame[filtered_frame["grade_prices_refreshed"] == 1]
         elif price_coverage_filter == "Not fetched":
@@ -634,7 +719,7 @@ with inventory_tab:
                         "Sale date", key=f"sold_date_{sold_card['id']}"
                     )
                     marketplace = sale_row_1[1].selectbox(
-                        "Marketplace", ["eBay", "Whatnot", "Facebook", "Card show", "Direct", "Other"],
+                        "Marketplace", ["Direct", "Card show", "Facebook", "eBay", "Whatnot", "Other"],
                         key=f"sold_marketplace_{sold_card['id']}",
                     )
                     sale_quantity = int(sale_row_1[2].number_input(
@@ -642,36 +727,50 @@ with inventory_tab:
                         value=1, step=1, key=f"sold_quantity_{sold_card['id']}",
                     ))
                     buyer = sale_row_1[3].text_input("Buyer", key=f"sold_buyer_{sold_card['id']}")
-                    sale_row_2 = st.columns(4)
-                    sale_price = sale_row_2[0].number_input(
-                        "Item sale price", min_value=0.0, format="%.2f",
-                        key=f"sold_price_{sold_card['id']}",
+                    payment_row = st.columns(3)
+                    payment_method = payment_row[0].selectbox(
+                        "Payment method", ["Cash", "Trade-in value", "Cash + trade"],
+                        key=f"sold_payment_method_{sold_card['id']}",
                     )
-                    shipping_charged = sale_row_2[1].number_input(
+                    cash_received = payment_row[1].number_input(
+                        "Cash received", min_value=0.0, format="%.2f",
+                        disabled=payment_method == "Trade-in value",
+                        key=f"sold_cash_received_{sold_card['id']}",
+                    )
+                    trade_value = payment_row[2].number_input(
+                        "Trade-in value", min_value=0.0, format="%.2f",
+                        disabled=payment_method == "Cash",
+                        key=f"sold_trade_value_{sold_card['id']}",
+                    )
+                    effective_cash = 0.0 if payment_method == "Trade-in value" else cash_received
+                    effective_trade = 0.0 if payment_method == "Cash" else trade_value
+                    sale_price = effective_cash + effective_trade
+                    sale_row_2 = st.columns(4)
+                    shipping_charged = sale_row_2[0].number_input(
                         "Shipping charged", min_value=0.0, format="%.2f",
                         key=f"sold_shipping_charged_{sold_card['id']}",
                     )
-                    fees = sale_row_2[2].number_input(
+                    fees = sale_row_2[1].number_input(
                         "Platform fees", min_value=0.0, format="%.2f",
                         key=f"sold_fees_{sold_card['id']}",
                     )
-                    promoted_fees = sale_row_2[3].number_input(
+                    promoted_fees = sale_row_2[2].number_input(
                         "Promoted listing fees", min_value=0.0, format="%.2f",
                         key=f"sold_promoted_{sold_card['id']}",
                     )
-                    sale_row_3 = st.columns(4)
-                    label_cost = sale_row_3[0].number_input(
+                    label_cost = sale_row_2[3].number_input(
                         "Shipping label cost", min_value=0.0, format="%.2f",
                         key=f"sold_label_{sold_card['id']}",
                     )
+                    sale_row_3 = st.columns(3)
                     tax_collected = sale_row_3[1].number_input(
                         "Tax collected", min_value=0.0, format="%.2f",
                         key=f"sold_tax_{sold_card['id']}",
                     )
-                    order_number = sale_row_3[2].text_input(
+                    order_number = sale_row_3[0].text_input(
                         "Order number", key=f"sold_order_{sold_card['id']}"
                     )
-                    item_id = sale_row_3[3].text_input(
+                    item_id = sale_row_3[2].text_input(
                         "Marketplace item ID", value=sold_card.get("ebay_item_id", ""),
                         key=f"sold_item_id_{sold_card['id']}",
                     )
@@ -699,6 +798,9 @@ with inventory_tab:
                             "title": sold_card["card_name"],
                             "quantity": sale_quantity,
                             "item_subtotal": round(sale_price, 2),
+                            "payment_method": payment_method,
+                            "cash_received": round(effective_cash, 2),
+                            "trade_value": round(effective_trade, 2),
                             "shipping_charged": round(shipping_charged, 2),
                             "fees": round(fees, 2),
                             "shipping_label_cost": round(label_cost, 2),
@@ -725,14 +827,19 @@ with inventory_tab:
                 "You can use other tabs while the job runs."
             )
             refresh_choices = {
-                f"{card['sku']} — {card['card_name']}": card for card in cards if card.get("scp_id")
+                f"{card['sku']} — {card['card_name']}": card for card in cards
             }
             missing_cards = [
                 card for card in cards
-                if card.get("scp_id")
-                and not card.get("grade_prices_refreshed")
+                if not card.get("grade_prices_refreshed")
             ]
             st.write(f"{len(missing_cards):,} inventory cards have not had grading prices fetched yet.")
+            unresolved_cards = [card for card in missing_cards if not card.get("scp_id")]
+            if unresolved_cards:
+                st.info(
+                    f"{len(unresolved_cards):,} cards have no SportsCardsPro ID. Refresh will search "
+                    "for an exact set, card name, number, and variant match before fetching prices."
+                )
             batch_size = st.number_input(
                 "Small batch size",
                 min_value=1,
@@ -760,6 +867,11 @@ with inventory_tab:
                         st.caption(f"Current: {job['current']}")
                 elif job["state"] == "completed":
                     st.success(f"Background refresh completed: {job['succeeded']:,} cards updated.")
+                elif job["state"] == "completed_with_errors":
+                    st.warning(
+                        f"Refresh finished: {job['succeeded']:,} updated and {job['failed']:,} "
+                        f"could not be matched. Last issue: {job['last_error']}"
+                    )
                 elif job["state"] == "paused":
                     st.warning(f"Refresh paused after {job['succeeded']:,} successful updates.")
                 elif job["state"] == "error":
