@@ -121,8 +121,71 @@ class EbayClient:
         return str(data.get("listingId", ""))
 
 
+def public_image_urls(value: Any) -> list[str]:
+    return [
+        line.strip()
+        for line in str(value or "").splitlines()
+        if line.strip().startswith("https://")
+    ]
+
+
+def listing_readiness_issues(card: dict[str, Any], config: EbayConfig | None = None) -> list[str]:
+    issues = []
+    if not str(card.get("sku") or "").strip():
+        issues.append("Missing SKU")
+    if not str(card.get("listing_title") or card.get("card_name") or "").strip():
+        issues.append("Missing title")
+    if len(str(card.get("listing_title") or card.get("card_name") or "")) > 80:
+        issues.append("Title exceeds 80 characters")
+    if not str(card.get("listing_description") or "").strip():
+        issues.append("Missing description")
+    if float(card.get("list_price") or 0) <= 0:
+        issues.append("Missing price")
+    if int(card.get("quantity") or 0) <= 0:
+        issues.append("No available quantity")
+    if not public_image_urls(card.get("image_urls")):
+        issues.append("Missing public HTTPS image")
+    if config:
+        required_settings = {
+            "Marketplace ID": config.marketplace_id,
+            "Location key": config.merchant_location_key,
+            "Category ID": config.category_id,
+            "Fulfillment policy": config.fulfillment_policy_id,
+            "Payment policy": config.payment_policy_id,
+            "Return policy": config.return_policy_id,
+            "Condition": config.condition,
+        }
+        for label, value in required_settings.items():
+            if not str(value or "").strip():
+                issues.append(f"Missing eBay {label}")
+        if not (
+            config.access_token
+            or (config.client_id and config.client_secret and config.refresh_token)
+        ):
+            issues.append("Missing eBay OAuth credentials")
+    return issues
+
+
+def ebay_draft_row(card: dict[str, Any]) -> dict[str, Any]:
+    images = public_image_urls(card.get("image_urls"))
+    return {
+        "Custom label (SKU)": card.get("sku", ""),
+        "Title": card.get("listing_title") or card.get("card_name", ""),
+        "Description": card.get("listing_description", ""),
+        "Quantity": int(card.get("quantity") or 0),
+        "Start price": f"{float(card.get('list_price') or 0):.2f}",
+        "PicURL": "|".join(images),
+        "Set": card.get("set_name", ""),
+        "Card Number": card.get("card_number", ""),
+        "Condition": card.get("condition", ""),
+        "Grader": card.get("grader", ""),
+        "Grade": card.get("grade", ""),
+        "Certification Number": card.get("certification_number", ""),
+    }
+
+
 def listing_payloads(card: dict[str, Any], config: EbayConfig) -> tuple[dict[str, Any], dict[str, Any]]:
-    image_urls = [line.strip() for line in str(card.get("image_urls", "")).splitlines() if line.strip()]
+    image_urls = public_image_urls(card.get("image_urls"))
     inventory_item = {
         "availability": {
             "shipToLocationAvailability": {"quantity": int(card.get("quantity") or 1)}

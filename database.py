@@ -2,13 +2,30 @@
 
 from __future__ import annotations
 
+import csv
 import sqlite3
+import shutil
+import zipfile
 from contextlib import contextmanager
+from datetime import datetime
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Iterator
 
 
 DB_PATH = Path(__file__).with_name("price_hunter.db")
+CORE_TABLES = [
+    "cards",
+    "purchases",
+    "expenses",
+    "sales",
+    "purchase_allocations",
+    "receipts",
+    "grading_submissions",
+    "grading_items",
+    "inventory_events",
+    "sale_items",
+]
 
 
 @contextmanager
@@ -21,6 +38,107 @@ def connection() -> Iterator[sqlite3.Connection]:
         db.commit()
     finally:
         db.close()
+
+
+def database_path() -> Path:
+    return DB_PATH
+
+
+def database_exists() -> bool:
+    return DB_PATH.exists()
+
+
+def table_counts() -> dict[str, int]:
+    if not DB_PATH.exists():
+        return {table: 0 for table in CORE_TABLES}
+    counts: dict[str, int] = {}
+    with connection() as db:
+        existing = {
+            row["name"]
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        for table in CORE_TABLES:
+            if table in existing:
+                counts[table] = int(db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            else:
+                counts[table] = 0
+    return counts
+
+
+def backup_bytes() -> bytes:
+    if not DB_PATH.exists():
+        return b""
+    return DB_PATH.read_bytes()
+
+
+def export_csv_zip() -> bytes:
+    archive = BytesIO()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        with connection() as db:
+            existing = {
+                row["name"]
+                for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            for table in CORE_TABLES:
+                if table not in existing:
+                    continue
+                rows = db.execute(f"SELECT * FROM {table}").fetchall()
+                columns = [description[0] for description in db.execute(f"SELECT * FROM {table} LIMIT 0").description]
+                output = StringIO()
+                writer = csv.DictWriter(output, fieldnames=columns)
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({column: row[column] for column in columns})
+                bundle.writestr(f"{table}.csv", output.getvalue())
+    return archive.getvalue()
+
+
+def _validate_database(path: Path) -> None:
+    try:
+        db = sqlite3.connect(path)
+        try:
+            result = db.execute("PRAGMA integrity_check").fetchone()
+            if not result or result[0] != "ok":
+                raise ValueError("SQLite integrity check failed.")
+            tables = {
+                row[0]
+                for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            required = {"cards", "sales", "purchases", "expenses"}
+            missing = required - tables
+            if missing:
+                raise ValueError(f"Backup is missing required table(s): {', '.join(sorted(missing))}.")
+        finally:
+            db.close()
+    except sqlite3.Error as exc:
+        raise ValueError("Uploaded file is not a readable SQLite database.") from exc
+
+
+def restore_database(contents: bytes) -> Path | None:
+    if not contents:
+        raise ValueError("Uploaded database file is empty.")
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    candidate = DB_PATH.with_suffix(".upload.db")
+    candidate.write_bytes(contents)
+    try:
+        _validate_database(candidate)
+        backup_path = None
+        if DB_PATH.exists():
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup_path = DB_PATH.with_name(f"{DB_PATH.stem}.before-restore-{stamp}{DB_PATH.suffix}")
+            shutil.copy2(DB_PATH, backup_path)
+        shutil.move(str(candidate), DB_PATH)
+        initialize()
+        return backup_path
+    finally:
+        if candidate.exists():
+            candidate.unlink()
 
 
 def initialize() -> None:

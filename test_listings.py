@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 
 import database
 from business_imports import equal_card_allocations, read_ebay_workbook
-from ebay import EbayConfig, listing_payloads
+from ebay import EbayConfig, ebay_draft_row, listing_payloads, listing_readiness_issues
 from grading import grading_opportunity
 from receipt_scanner import allocate_receipt_amount, parse_receipt_text
 from sales import packing_slip_text
@@ -490,6 +490,59 @@ class InventoryWorkflowTests(unittest.TestCase):
         ])
         self.assertEqual(offer["pricingSummary"]["price"]["value"], "12.34")
         self.assertEqual(offer["listingPolicies"]["fulfillmentPolicyId"], "f")
+
+    def test_database_backup_restore_replaces_valid_database_and_saves_safety_copy(self):
+        backup = database.backup_bytes()
+        database.add_card({
+            "card_name": "Replacement Card",
+            "set_name": "Other Set",
+            "quantity": 1,
+            "cost": 5.0,
+        })
+        self.assertEqual(len(database.all_cards()), 2)
+
+        safety_backup = database.restore_database(backup)
+
+        self.assertIsNotNone(safety_backup)
+        self.assertTrue(safety_backup.exists())
+        restored_cards = database.all_cards()
+        self.assertEqual(len(restored_cards), 1)
+        self.assertEqual(restored_cards[0]["card_name"], "Test Player")
+
+    def test_database_csv_export_contains_core_tables(self):
+        from io import BytesIO
+        import zipfile
+
+        archive = zipfile.ZipFile(BytesIO(database.export_csv_zip()))
+        self.assertIn("cards.csv", archive.namelist())
+        self.assertIn("sales.csv", archive.namelist())
+        self.assertIn("Test Player", archive.read("cards.csv").decode())
+
+    def test_ebay_readiness_reports_missing_publish_requirements(self):
+        issues = listing_readiness_issues({
+            "sku": "PH-1",
+            "listing_title": "Card title",
+            "listing_description": "Card description",
+            "list_price": 10.0,
+            "quantity": 1,
+            "image_urls": "http://example.com/not-public-enough.jpg",
+        })
+        self.assertEqual(issues, ["Missing public HTTPS image"])
+
+    def test_ebay_draft_row_uses_public_images_and_saved_fields(self):
+        row = ebay_draft_row({
+            "sku": "PH-1",
+            "listing_title": "Card title",
+            "listing_description": "Card description",
+            "list_price": 12.3,
+            "quantity": 2,
+            "image_urls": "https://example.com/front.jpg\nhttp://example.com/back.jpg",
+            "set_name": "Set",
+            "card_number": "7",
+        })
+        self.assertEqual(row["Custom label (SKU)"], "PH-1")
+        self.assertEqual(row["Start price"], "12.30")
+        self.assertEqual(row["PicURL"], "https://example.com/front.jpg")
 
 
 if __name__ == "__main__":

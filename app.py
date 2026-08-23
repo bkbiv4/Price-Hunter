@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -19,7 +20,14 @@ from business_ui import (
     render_reports,
     render_sales,
 )
-from ebay import EbayClient, EbayConfig, EbayError, listing_payloads
+from ebay import (
+    EbayClient,
+    EbayConfig,
+    EbayError,
+    ebay_draft_row,
+    listing_payloads,
+    listing_readiness_issues,
+)
 from listings import build_description, build_title, suggested_price
 from scp_import import REQUIRED_COLUMNS, collection_row_to_card, collection_type, import_identity
 from sportscardspro import (
@@ -48,6 +56,60 @@ def sync_market_value(guide_prices: dict[str, float]) -> None:
     """Keep market value aligned with the selected SportsCardsPro price."""
     selected_basis = st.session_state.get("add_price_basis")
     st.session_state.add_market_value = float(guide_prices.get(selected_basis, 0.0))
+
+
+def render_backup_restore() -> None:
+    st.subheader("Backup and restore")
+    db_path = database.database_path()
+    counts = database.table_counts()
+    st.write(f"Active database: `{db_path}`")
+    st.caption(
+        "Inventory and business records live in this local SQLite database. "
+        "Git ignores this file, so use backups when moving between computers."
+    )
+    metrics = st.columns(4)
+    metrics[0].metric("Inventory rows", f"{counts.get('cards', 0):,}")
+    metrics[1].metric("Sales", f"{counts.get('sales', 0):,}")
+    metrics[2].metric("Purchases", f"{counts.get('purchases', 0):,}")
+    metrics[3].metric("Receipts", f"{counts.get('receipts', 0):,}")
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_columns = st.columns(2)
+    backup_columns[0].download_button(
+        "Download full database backup",
+        database.backup_bytes(),
+        file_name=f"price_hunter-{timestamp}.db",
+        mime="application/vnd.sqlite3",
+        disabled=not database.database_exists(),
+    )
+    backup_columns[1].download_button(
+        "Export all tables as CSV zip",
+        database.export_csv_zip(),
+        file_name=f"price_hunter-csv-{timestamp}.zip",
+        mime="application/zip",
+        disabled=not database.database_exists(),
+    )
+
+    with st.expander("Restore from database backup"):
+        upload = st.file_uploader("SQLite database backup", type=["db", "sqlite", "sqlite3"])
+        confirmation = st.text_input(
+            "Type RESTORE to replace the active database",
+            help="A safety copy of the current database is created before replacement.",
+        )
+        if st.button(
+            "Restore uploaded database",
+            disabled=not (upload and confirmation == "RESTORE"),
+            type="primary",
+        ):
+            try:
+                safety_backup = database.restore_database(upload.getvalue())
+                if safety_backup:
+                    st.success(f"Database restored. Previous database saved as `{safety_backup}`.")
+                else:
+                    st.success("Database restored.")
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
 
 st.set_page_config(page_title="Price Hunter", page_icon="🏷️", layout="wide")
 st.title("Price Hunter")
@@ -79,6 +141,7 @@ with st.sidebar:
     history_tab,
     receipts_tab,
     reports_tab,
+    backup_tab,
     price_search_tab,
     add_tab,
     listing_tab,
@@ -93,6 +156,7 @@ with st.sidebar:
         "History",
         "Receipts",
         "Reports",
+        "Backup",
         "Price search",
         "Add a card",
         "Listing studio",
@@ -122,6 +186,9 @@ with receipts_tab:
 
 with reports_tab:
     render_reports()
+
+with backup_tab:
+    render_backup_restore()
 
 with price_search_tab:
     st.subheader("Search a set or parallel")
@@ -1053,26 +1120,59 @@ with listing_tab:
             st.rerun()
 
         if queue_cards:
-            queue_frame = pd.DataFrame([{
-                "sku": item["sku"],
-                "title": item["listing_title"] or build_title(
-                    item["card_name"], item["set_name"], item["grade"], item["card_number"], item["grader"]
-                ),
-                "description": item["listing_description"] or build_description(
-                    item["card_name"], item["set_name"], item["condition"], item["grade"],
-                    item["notes"], item["sku"], item["grader"], item["certification_number"]
-                ),
-                "price": item["list_price"] or suggested_price(
-                    item["market_price"], item["cost"], queue_markup
-                ),
-                "quantity": item["quantity"],
-                "image_urls": item.get("image_urls", ""),
-            } for item in queue_cards])
-            st.download_button(
+            prepared_queue = []
+            for item in queue_cards:
+                prepared = {
+                    **item,
+                    "listing_title": item["listing_title"] or build_title(
+                        item["card_name"], item["set_name"], item["grade"],
+                        item["card_number"], item["grader"],
+                    ),
+                    "listing_description": item["listing_description"] or build_description(
+                        item["card_name"], item["set_name"], item["condition"],
+                        item["grade"], item["notes"], item["sku"],
+                        item["grader"], item["certification_number"],
+                    ),
+                    "list_price": item["list_price"] or suggested_price(
+                        item["market_price"], item["cost"], queue_markup
+                    ),
+                }
+                prepared["readiness_issues"] = listing_readiness_issues(prepared)
+                prepared_queue.append(prepared)
+            queue_frame = pd.DataFrame([
+                {
+                    "sku": item["sku"],
+                    "title": item["listing_title"],
+                    "price": item["list_price"],
+                    "quantity": item["quantity"],
+                    "status": "Ready" if not item["readiness_issues"] else "Needs work",
+                    "missing": "; ".join(item["readiness_issues"]),
+                }
+                for item in prepared_queue
+            ])
+            st.markdown("#### Listing queue readiness")
+            st.dataframe(
+                queue_frame,
+                use_container_width=True,
+                hide_index=True,
+                column_config={"price": st.column_config.NumberColumn("Price", format="$%.2f")},
+            )
+            ready_queue = [item for item in prepared_queue if not item["readiness_issues"]]
+            draft_export = pd.DataFrame([ebay_draft_row(item) for item in prepared_queue])
+            ready_export = pd.DataFrame([ebay_draft_row(item) for item in ready_queue])
+            download_columns = st.columns(2)
+            download_columns[0].download_button(
                 "Download listing queue CSV",
-                queue_frame.to_csv(index=False).encode("utf-8"),
+                draft_export.to_csv(index=False).encode("utf-8"),
                 file_name="price_hunter_ebay_drafts.csv",
                 mime="text/csv",
+            )
+            download_columns[1].download_button(
+                "Download ready listings CSV",
+                ready_export.to_csv(index=False).encode("utf-8"),
+                file_name="price_hunter_ebay_ready.csv",
+                mime="text/csv",
+                disabled=not ready_queue,
             )
 
         editor_choices = {choice_label: choices[choice_label] for choice_label in queue_labels} if queue_labels else choices
@@ -1113,30 +1213,19 @@ with listing_tab:
                 st.success("Listing draft saved.")
 
         st.markdown("#### Publish through eBay Inventory API")
-        required_ebay_config = [
-            ebay_config.marketplace_id,
-            ebay_config.merchant_location_key,
-            ebay_config.category_id,
-            ebay_config.fulfillment_policy_id,
-            ebay_config.payment_policy_id,
-            ebay_config.return_policy_id,
-            ebay_config.condition,
-        ]
-        publish_ready = bool(
-            title.strip()
-            and description.strip()
-            and list_price > 0
-            and image_urls.strip()
-            and all(required_ebay_config)
-            and (ebay_config.access_token or (
-                ebay_config.client_id and ebay_config.client_secret and ebay_config.refresh_token
-            ))
-        )
-        if not publish_ready:
-            st.caption(
-                "Publishing requires a saved draft, at least one public image URL, category, condition, "
-                "location, payment/return/fulfillment policies, and user OAuth credentials."
-            )
+        publish_card = {
+            **card,
+            "listing_title": title.strip(),
+            "listing_description": description.strip(),
+            "list_price": float(list_price),
+            "image_urls": image_urls.strip(),
+        }
+        publish_issues = listing_readiness_issues(publish_card, ebay_config)
+        publish_ready = not publish_issues
+        if publish_issues:
+            with st.expander("Publishing checklist", expanded=True):
+                for issue in publish_issues:
+                    st.warning(issue)
         publish_confirmation = st.checkbox(
             f"I confirm this will create a listing in eBay {ebay_environment}.",
             key=f"publish_confirm_{card['id']}",
@@ -1147,13 +1236,6 @@ with listing_tab:
             type="primary",
         ):
             try:
-                publish_card = {
-                    **card,
-                    "listing_title": title.strip(),
-                    "listing_description": description.strip(),
-                    "list_price": float(list_price),
-                    "image_urls": image_urls.strip(),
-                }
                 inventory_payload, offer_payload = listing_payloads(publish_card, ebay_config)
                 ebay_client = EbayClient(ebay_config)
                 ebay_client.create_inventory_item(card["sku"], inventory_payload)
