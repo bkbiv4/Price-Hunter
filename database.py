@@ -922,7 +922,7 @@ def update_sale_adjustment(
             ),
         )
 
-
+#47332e92d50a8d360bbd35f2234218aa75e555d2
 def create_grading_submission(values: dict[str, Any], items: list[dict[str, Any]]) -> int:
     if not items:
         raise ValueError("Choose at least one card for the grading submission.")
