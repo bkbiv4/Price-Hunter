@@ -378,6 +378,8 @@ def equal_card_allocations(
     allocations: list[dict[str, Any]] = []
     for card in cards:
         quantity = max(0, int(card.get("quantity", 0)))
+        if quantity <= 0:
+            continue
         higher_units = min(quantity, remainder)
         remainder -= higher_units
         allocated_cents = base_cents * quantity + higher_units

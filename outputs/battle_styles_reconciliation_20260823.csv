@@ -1,0 +1,151 @@
+source-card,source-number,source-variant,source-rarity,source-quantity,generated-variant-product,generated-plain-product,scp-existing-products,existing-exact-quantity,existing-plain-quantity,existing-base-quantity,missing-quantity,status,recommendation
+Bellsprout,001/163,Normal,Common,1,Bellsprout #1,Bellsprout #1,Bellsprout #1,1,1,1,0,covered_exact,do_not_import
+Weepinbell,002/163,Normal,Uncommon,1,Weepinbell #2,Weepinbell #2,Weepinbell #2,1,1,1,0,covered_exact,do_not_import
+Victreebel,003/163,Normal,Rare,1,Victreebel #3,Victreebel #3,Victreebel #3; Victreebel [Reverse Holo] #3,1,1,2,0,covered_exact,do_not_import
+Victreebel,003/163,Reverse Holo,Rare,1,Victreebel [Reverse Holo] #3,Victreebel [Reverse Holo] #3,Victreebel #3; Victreebel [Reverse Holo] #3,1,1,2,0,covered_exact,do_not_import
+Cacnea,004/163,Normal,Common,1,Cacnea #4,Cacnea #4,Cacnea #4; Cacnea [Reverse Holo] #4,1,1,2,0,covered_exact,do_not_import
+Cacnea,004/163,Reverse Holo,Common,1,Cacnea [Reverse Holo] #4,Cacnea [Reverse Holo] #4,Cacnea #4; Cacnea [Reverse Holo] #4,1,1,2,0,covered_exact,do_not_import
+Cacturne,005/163,Normal,Uncommon,1,Cacturne #5,Cacturne #5,Cacturne [Reverse Holo] #5; Cacturne #5,1,1,2,0,covered_exact,do_not_import
+Cacturne,005/163,Reverse Holo,Uncommon,1,Cacturne [Reverse Holo] #5,Cacturne [Reverse Holo] #5,Cacturne [Reverse Holo] #5; Cacturne #5,1,1,2,0,covered_exact,do_not_import
+Kricketune V,006/163,Normal Holo,Holo Rare V,1,Kricketune V [Holo] #6,Kricketune V #6,Kricketune V #6,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Cherubi,007/163,Normal,Common,1,Cherubi #7,Cherubi #7,Cherubi #7,1,1,1,0,covered_exact,do_not_import
+Cherrim,008/163,Normal Holo,Rare Holo,1,Cherrim [Holo] #8,Cherrim #8,Cherrim [Holo] #8,1,0,1,0,covered_exact,do_not_import
+Carnivine,009/163,Normal,Uncommon,1,Carnivine #9,Carnivine #9,Carnivine #9,1,1,1,0,covered_exact,do_not_import
+Durant,010/163,Normal,Uncommon,1,Durant #10,Durant #10,Durant #10,1,1,1,0,covered_exact,do_not_import
+Scatterbug,011/163,Normal,Common,1,Scatterbug #11,Scatterbug #11,Scatterbug #11,1,1,1,0,covered_exact,do_not_import
+Spewpa,012/163,Normal,Uncommon,1,Spewpa #12,Spewpa #12,Spewpa #12,1,1,1,0,covered_exact,do_not_import
+Vivillon,013/163,Normal,Rare,1,Vivillon #13,Vivillon #13,Vivillon #13,1,1,1,0,covered_exact,do_not_import
+Fomantis,014/163,Normal,Common,1,Fomantis #14,Fomantis #14,Fomantis #14,1,1,1,0,covered_exact,do_not_import
+Lurantis,015/163,Normal,Rare,1,Lurantis #15,Lurantis #15,Lurantis #15; Lurantis [Reverse Holo] #15,1,1,2,0,covered_exact,do_not_import
+Lurantis,015/163,Reverse Holo,Rare,1,Lurantis [Reverse Holo] #15,Lurantis [Reverse Holo] #15,Lurantis #15; Lurantis [Reverse Holo] #15,1,1,2,0,covered_exact,do_not_import
+Blipbug,017/163,Normal,Common,1,Blipbug #17,Blipbug #17,Blipbug #17,1,1,1,0,covered_exact,do_not_import
+Flapple V,018/163,Normal Holo,Holo Rare V,1,Flapple V [Holo] #18,Flapple V #18,Flapple V #18,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Flapple VMAX,019/163,Normal Holo,Holo Rare VMAX,1,Flapple VMAX [Holo] #19,Flapple VMAX #19,Flapple VMAX #19,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Entei,020/163,Normal Holo,Rare Holo,1,Entei [Holo] #20,Entei #20,Entei #20,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Victini VMAX,022/163,Normal Holo,Holo Rare VMAX,1,Victini VMAX [Holo] #22,Victini VMAX #22,Victini VMAX #22,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Tepig,023/163,Normal,Common,1,Tepig #23,Tepig #23,Tepig [Reverse Holo] #23; Tepig #23,1,1,2,0,covered_exact,do_not_import
+Tepig,023/163,Reverse Holo,Common,1,Tepig [Reverse Holo] #23,Tepig [Reverse Holo] #23,Tepig [Reverse Holo] #23; Tepig #23,1,1,2,0,covered_exact,do_not_import
+Pignite,024/163,Normal,Uncommon,1,Pignite #24,Pignite #24,Pignite [Reverse Holo] #24; Pignite #24,1,1,2,0,covered_exact,do_not_import
+Pignite,024/163,Reverse Holo,Uncommon,1,Pignite [Reverse Holo] #24,Pignite [Reverse Holo] #24,Pignite [Reverse Holo] #24; Pignite #24,1,1,2,0,covered_exact,do_not_import
+Heatmor,026/163,Normal,Uncommon,1,Heatmor #26,Heatmor #26,Heatmor #26,1,1,1,0,covered_exact,do_not_import
+Salandit,027/163,Normal,Common,1,Salandit #27,Salandit #27,Salandit #27,1,1,1,0,covered_exact,do_not_import
+Salazzle,028/163,Normal,Rare,1,Salazzle #28,Salazzle #28,Salazzle #28,1,1,1,0,covered_exact,do_not_import
+Salazzle,028/163,Reverse Holo,Rare,1,Salazzle [Reverse Holo] #28,Salazzle [Reverse Holo] #28,Salazzle #28,0,0,1,1,variant_quantity_gap,import_quantity_gap
+Sizzlipede,029/163,Normal,Common,1,Sizzlipede #29,Sizzlipede #29,Sizzlipede #29,1,1,1,0,covered_exact,do_not_import
+Centiskorch,030/163,Normal,Rare,1,Centiskorch #30,Centiskorch #30,Centiskorch #30,1,1,1,0,covered_exact,do_not_import
+Horsea,031/163,Normal,Common,1,Horsea #31,Horsea #31,Horsea #31,1,1,1,0,covered_exact,do_not_import
+Seadra,032/163,Normal,Uncommon,1,Seadra #32,Seadra #32,Seadra #32,1,1,1,0,covered_exact,do_not_import
+Kingdra,033/163,Reverse Holo,Rare Holo,1,Kingdra [Reverse Holo] #33,Kingdra [Reverse Holo] #33,Kingdra [Reverse Holo] #33,1,1,1,0,covered_exact,do_not_import
+Galarian Mr. Mime,034/163,Normal,Common,1,Galarian Mr. Mime #34,Galarian Mr. Mime #34,Galarian Mr. Mime #34,1,1,1,0,covered_exact,do_not_import
+Remoraid,036/163,Normal,Common,1,Remoraid #36,Remoraid #36,Remoraid #36,1,1,1,0,covered_exact,do_not_import
+Corphish,038/163,Normal,Common,1,Corphish #38,Corphish #38,Corphish #38,1,1,1,0,covered_exact,do_not_import
+Crawdaunt,039/163,Normal,Uncommon,1,Crawdaunt #39,Crawdaunt #39,Crawdaunt [Reverse Holo] #39; Crawdaunt #39,1,1,2,0,covered_exact,do_not_import
+Crawdaunt,039/163,Reverse Holo,Uncommon,1,Crawdaunt [Reverse Holo] #39,Crawdaunt [Reverse Holo] #39,Crawdaunt [Reverse Holo] #39; Crawdaunt #39,1,1,2,0,covered_exact,do_not_import
+Frillish,041/163,Normal,Common,1,Frillish #41,Frillish #41,Frillish #41,1,1,1,0,covered_exact,do_not_import
+Jellicent,042/163,Normal,Rare,1,Jellicent #42,Jellicent #42,Jellicent #42,1,1,1,0,covered_exact,do_not_import
+Bruxish,043/163,Normal,Uncommon,1,Bruxish #43,Bruxish #43,Bruxish #43,1,1,1,0,covered_exact,do_not_import
+Electabuzz,044/163,Normal,Common,1,Electabuzz #44,Electabuzz #44,Electabuzz #44,1,1,1,0,covered_exact,do_not_import
+Electivire,045/163,Normal,Rare,1,Electivire #45,Electivire #45,Electivire #45,1,1,1,0,covered_exact,do_not_import
+Shinx,046/163,Normal,Common,1,Shinx #46,Shinx #46,Shinx #46,1,1,1,0,covered_exact,do_not_import
+Luxio,047/163,Normal,Uncommon,1,Luxio #47,Luxio #47,Luxio #47,1,1,1,0,covered_exact,do_not_import
+Luxray,048/163,Normal Holo,Rare Holo,1,Luxray [Holo] #48,Luxray #48,Luxray #48,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Pachirisu,049/163,Normal,Common,1,Pachirisu #49,Pachirisu #49,Pachirisu #49; Pachirisu [Reverse Holo] #49,1,1,2,0,covered_exact,do_not_import
+Pachirisu,049/163,Reverse Holo,Common,1,Pachirisu [Reverse Holo] #49,Pachirisu [Reverse Holo] #49,Pachirisu #49; Pachirisu [Reverse Holo] #49,1,1,2,0,covered_exact,do_not_import
+Yamper,052/163,Normal,Common,1,Yamper #52,Yamper #52,Yamper #52,1,1,1,0,covered_exact,do_not_import
+Boltund,053/163,Reverse Holo,Rare,1,Boltund [Reverse Holo] #53,Boltund [Reverse Holo] #53,Boltund [Reverse Holo] #53,1,1,1,0,covered_exact,do_not_import
+Galarian Slowpoke,054/163,Normal,Common,1,Galarian Slowpoke #54,Galarian Slowpoke #54,Galarian Slowpoke [Reverse Holo] #54; Galarian Slowpoke #54,1,1,2,0,covered_exact,do_not_import
+Galarian Slowpoke,054/163,Reverse Holo,Common,1,Galarian Slowpoke [Reverse Holo] #54,Galarian Slowpoke [Reverse Holo] #54,Galarian Slowpoke [Reverse Holo] #54; Galarian Slowpoke #54,1,1,2,0,covered_exact,do_not_import
+Spoink,055/163,Normal,Common,1,Spoink #55,Spoink #55,Spoink #55,1,1,1,0,covered_exact,do_not_import
+Grumpig,056/163,Normal,Uncommon,1,Grumpig #56,Grumpig #56,Grumpig #56; Grumpig [Reverse Holo] #56,1,1,2,0,covered_exact,do_not_import
+Grumpig,056/163,Reverse Holo,Uncommon,1,Grumpig [Reverse Holo] #56,Grumpig [Reverse Holo] #56,Grumpig #56; Grumpig [Reverse Holo] #56,1,1,2,0,covered_exact,do_not_import
+Baltoy,057/163,Normal,Common,1,Baltoy #57,Baltoy #57,Baltoy #57,1,1,1,0,covered_exact,do_not_import
+Chimecho,059/163,Normal,Common,1,Chimecho #59,Chimecho #59,Chimecho #59; Chimecho [Reverse Holo] #59,1,1,2,0,covered_exact,do_not_import
+Chimecho,059/163,Reverse Holo,Common,1,Chimecho [Reverse Holo] #59,Chimecho [Reverse Holo] #59,Chimecho #59; Chimecho [Reverse Holo] #59,1,1,2,0,covered_exact,do_not_import
+Espurr,060/163,Normal,Common,1,Espurr #60,Espurr #60,Espurr #60,1,1,1,0,covered_exact,do_not_import
+Meowstic,061/163,Normal Holo,Rare Holo,1,Meowstic [Holo] #61,Meowstic #61,Meowstic #61,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Dottler,064/163,Normal,Uncommon,1,Dottler #64,Dottler #64,Dottler #64,1,1,1,0,covered_exact,do_not_import
+Orbeetle,065/163,Normal Holo,Rare Holo,1,Orbeetle [Holo] #65,Orbeetle #65,Orbeetle #65,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Mankey,066/163,Normal,Common,1,Mankey #66,Mankey #66,Mankey [Reverse Holo] #66; Mankey #66,1,1,2,0,covered_exact,do_not_import
+Mankey,066/163,Reverse Holo,Common,1,Mankey [Reverse Holo] #66,Mankey [Reverse Holo] #66,Mankey [Reverse Holo] #66; Mankey #66,1,1,2,0,covered_exact,do_not_import
+Primeape,067/163,Reverse Holo,Rare,1,Primeape [Reverse Holo] #67,Primeape [Reverse Holo] #67,Primeape [Reverse Holo] #67,1,1,1,0,covered_exact,do_not_import
+Onix,068/163,Normal,Common,1,Onix #68,Onix #68,Onix #68,1,1,1,0,covered_exact,do_not_import
+Cubone,069/163,Normal,Common,1,Cubone #69,Cubone #69,Cubone #69,1,1,1,0,covered_exact,do_not_import
+Marowak,070/163,Normal,Rare,1,Marowak #70,Marowak #70,Marowak #70,1,1,1,0,covered_exact,do_not_import
+Gligar,071/163,Normal,Common,1,Gligar #71,Gligar #71,Gligar #71,1,1,1,0,covered_exact,do_not_import
+Gliscor,072/163,Normal,Uncommon,1,Gliscor #72,Gliscor #72,Gliscor #72,1,1,1,0,covered_exact,do_not_import
+Timburr,073/163,Normal,Common,1,Timburr #73,Timburr #73,Timburr #73,1,1,1,0,covered_exact,do_not_import
+Gurdurr,074/163,Normal,Uncommon,1,Gurdurr #74,Gurdurr #74,Gurdurr [Reverse Holo] #74; Gurdurr #74,1,1,2,0,covered_exact,do_not_import
+Gurdurr,074/163,Reverse Holo,Uncommon,1,Gurdurr [Reverse Holo] #74,Gurdurr [Reverse Holo] #74,Gurdurr [Reverse Holo] #74; Gurdurr #74,1,1,2,0,covered_exact,do_not_import
+Conkeldurr,075/163,Normal,Rare,1,Conkeldurr #75,Conkeldurr #75,Conkeldurr #75,1,1,1,0,covered_exact,do_not_import
+Mienfoo,076/163,Normal,Common,1,Mienfoo #76,Mienfoo #76,Mienfoo #76,1,1,1,0,covered_exact,do_not_import
+Mienshao,077/163,Normal,Rare,1,Mienshao #77,Mienshao #77,Mienshao #77,1,1,1,0,covered_exact,do_not_import
+Rolycoly,078/163,Normal,Common,1,Rolycoly #78,Rolycoly #78,Rolycoly #78; Rolycoly [Reverse Holo] #78,1,1,2,0,covered_exact,do_not_import
+Rolycoly,078/163,Reverse Holo,Common,1,Rolycoly [Reverse Holo] #78,Rolycoly [Reverse Holo] #78,Rolycoly #78; Rolycoly [Reverse Holo] #78,1,1,2,0,covered_exact,do_not_import
+Carkol,079/163,Normal,Uncommon,1,Carkol #79,Carkol #79,Carkol #79,1,1,1,0,covered_exact,do_not_import
+Silicobra,081/163,Normal,Common,1,Silicobra #81,Silicobra #81,Silicobra #81,1,1,1,0,covered_exact,do_not_import
+Sandaconda,082/163,Reverse Holo,Rare Holo,1,Sandaconda [Reverse Holo] #82,Sandaconda [Reverse Holo] #82,Sandaconda [Reverse Holo] #82,1,1,1,0,covered_exact,do_not_import
+Falinks,083/163,Normal,Rare,1,Falinks #83,Falinks #83,Falinks #83,1,1,1,0,covered_exact,do_not_import
+Stonjourner,084/163,Normal,Rare,1,Stonjourner #84,Stonjourner #84,Stonjourner #84,1,1,1,0,covered_exact,do_not_import
+Single Strike Urshifu V,085/163,Normal Holo,Holo Rare V,1,Single Strike Urshifu V [Holo] #85,Single Strike Urshifu V #85,Single Strike Urshifu V #85,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Rapid Strike Urshifu VMAX,088/163,Normal Holo,Holo Rare VMAX,1,Rapid Strike Urshifu VMAX [Holo] #88,Rapid Strike Urshifu VMAX #88,Rapid Strike Urshifu VMAX #88,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Zubat,089/163,Normal,Common,1,Zubat #89,Zubat #89,Zubat #89,1,1,1,0,covered_exact,do_not_import
+Golbat,090/163,Normal,Uncommon,1,Golbat #90,Golbat #90,Golbat #90,1,1,1,0,covered_exact,do_not_import
+Galarian Slowbro,092/163,Normal,Rare,1,Galarian Slowbro #92,Galarian Slowbro #92,Galarian Slowbro #92,1,1,1,0,covered_exact,do_not_import
+Murkrow,093/163,Normal,Common,1,Murkrow #93,Murkrow #93,Murkrow #93,1,1,1,0,covered_exact,do_not_import
+Honchkrow,094/163,Reverse Holo,Uncommon,1,Honchkrow [Reverse Holo] #94,Honchkrow [Reverse Holo] #94,Honchkrow [Reverse Holo] #94,1,1,1,0,covered_exact,do_not_import
+Houndour,095/163,Normal,Common,1,Houndour #95,Houndour #95,Houndour [Reverse Holo] #95; Houndour #95,1,1,2,0,covered_exact,do_not_import
+Houndour,095/163,Reverse Holo,Common,1,Houndour [Reverse Holo] #95,Houndour [Reverse Holo] #95,Houndour [Reverse Holo] #95; Houndour #95,1,1,2,0,covered_exact,do_not_import
+Houndoom,096/163,Reverse Holo,Rare Holo,1,Houndoom [Reverse Holo] #96,Houndoom [Reverse Holo] #96,Houndoom [Reverse Holo] #96,1,1,1,0,covered_exact,do_not_import
+Morpeko,098/163,Normal,Uncommon,1,Morpeko #98,Morpeko #98,Morpeko #98,1,1,1,0,covered_exact,do_not_import
+Steelix,099/163,Reverse Holo,Rare Holo,1,Steelix [Reverse Holo] #99,Steelix [Reverse Holo] #99,Steelix [Reverse Holo] #99,1,1,1,0,covered_exact,do_not_import
+Mawile,100/163,Normal,Common,1,Mawile #100,Mawile #100,Mawile [Reverse Holo] #100; Mawile #100,1,1,2,0,covered_exact,do_not_import
+Mawile,100/163,Reverse Holo,Common,1,Mawile [Reverse Holo] #100,Mawile [Reverse Holo] #100,Mawile [Reverse Holo] #100; Mawile #100,1,1,2,0,covered_exact,do_not_import
+Bronzor,101/163,Normal,Common,1,Bronzor #101,Bronzor #101,Bronzor #101,1,1,1,0,covered_exact,do_not_import
+Bronzong,102/163,Normal Holo,Rare Holo,1,Bronzong [Holo] #102,Bronzong #102,Bronzong #102,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Pawniard,103/163,Normal,Common,1,Pawniard #103,Pawniard #103,Pawniard [Reverse Holo] #103; Pawniard #103,1,1,2,0,covered_exact,do_not_import
+Pawniard,103/163,Reverse Holo,Common,1,Pawniard [Reverse Holo] #103,Pawniard [Reverse Holo] #103,Pawniard [Reverse Holo] #103; Pawniard #103,1,1,2,0,covered_exact,do_not_import
+Bisharp,104/163,Normal,Uncommon,1,Bisharp #104,Bisharp #104,Bisharp #104,1,1,1,0,covered_exact,do_not_import
+Honedge,105/163,Normal,Common,1,Honedge #105,Honedge #105,Honedge #105,1,1,1,0,covered_exact,do_not_import
+Doublade,106/163,Normal,Uncommon,1,Doublade #106,Doublade #106,Doublade #106,1,1,1,0,covered_exact,do_not_import
+Aegislash,107/163,Normal Holo,Rare Holo,1,Aegislash [Holo] #107,Aegislash #107,Aegislash [Holo] #107,1,0,1,0,covered_exact,do_not_import
+Spearow,111/163,Normal,Common,1,Spearow #111,Spearow #111,Spearow [Reverse Holo] #111; Spearow #111,1,1,2,0,covered_exact,do_not_import
+Spearow,111/163,Reverse Holo,Common,1,Spearow [Reverse Holo] #111,Spearow [Reverse Holo] #111,Spearow [Reverse Holo] #111; Spearow #111,1,1,2,0,covered_exact,do_not_import
+Fearow,112/163,Normal,Uncommon,1,Fearow #112,Fearow #112,Fearow #112; Fearow [Reverse Holo] #112,1,1,2,0,covered_exact,do_not_import
+Fearow,112/163,Reverse Holo,Uncommon,2,Fearow [Reverse Holo] #112,Fearow [Reverse Holo] #112,Fearow #112; Fearow [Reverse Holo] #112,1,1,2,1,variant_quantity_gap,import_quantity_gap
+Lickitung,113/163,Normal,Common,1,Lickitung #113,Lickitung #113,Lickitung #113,1,1,1,0,covered_exact,do_not_import
+Lickilicky,114/163,Normal,Rare,1,Lickilicky #114,Lickilicky #114,Lickilicky #114,1,1,1,0,covered_exact,do_not_import
+Glameow,115/163,Normal,Common,1,Glameow #115,Glameow #115,Glameow [Reverse Holo] #115; Glameow #115,1,1,2,0,covered_exact,do_not_import
+Glameow,115/163,Reverse Holo,Common,1,Glameow [Reverse Holo] #115,Glameow [Reverse Holo] #115,Glameow [Reverse Holo] #115; Glameow #115,1,1,2,0,covered_exact,do_not_import
+Purugly,116/163,Normal,Uncommon,1,Purugly #116,Purugly #116,Purugly #116,1,1,1,0,covered_exact,do_not_import
+Stoutland V,117/163,Normal Holo,Holo Rare V,1,Stoutland V [Holo] #117,Stoutland V #117,Stoutland V #117,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Bouffalant,118/163,Normal,Uncommon,1,Bouffalant #118,Bouffalant #118,Bouffalant #118,1,1,1,0,covered_exact,do_not_import
+Drampa,119/163,Normal,Rare,1,Drampa #119,Drampa #119,Drampa #119,1,1,1,0,covered_exact,do_not_import
+Indeedee,120/163,Normal,Uncommon,1,Indeedee #120,Indeedee #120,Indeedee #120,1,1,1,0,covered_exact,do_not_import
+Bruno,121/163,Normal,Uncommon,1,Bruno #121,Bruno #121,Bruno #121,1,1,1,0,covered_exact,do_not_import
+Camping Gear,122/163,Normal,Uncommon,1,Camping Gear #122,Camping Gear #122,Camping Gear #122; Camping Gear [Reverse Holo] #122,1,1,2,0,covered_exact,do_not_import
+Camping Gear,122/163,Reverse Holo,Uncommon,1,Camping Gear [Reverse Holo] #122,Camping Gear [Reverse Holo] #122,Camping Gear #122; Camping Gear [Reverse Holo] #122,1,1,2,0,covered_exact,do_not_import
+Cheryl,123/163,Normal,Uncommon,1,Cheryl #123,Cheryl #123,Cheryl [Reverse Holo] #123; Cheryl #123,1,1,2,0,covered_exact,do_not_import
+Cheryl,123/163,Reverse Holo,Uncommon,1,Cheryl [Reverse Holo] #123,Cheryl [Reverse Holo] #123,Cheryl [Reverse Holo] #123; Cheryl #123,1,1,2,0,covered_exact,do_not_import
+Energy Recycler,124/163,Normal,Uncommon,1,Energy Recycler #124,Energy Recycler #124,Energy Recycler #124,1,1,1,0,covered_exact,do_not_import
+Escape Rope,125/163,Normal,Uncommon,1,Escape Rope #125,Escape Rope #125,Escape Rope #125,1,1,1,0,covered_exact,do_not_import
+Exp. Share,126/163,Reverse Holo,Uncommon,2,Exp. Share [Reverse Holo] #126,Exp. Share [Reverse Holo] #126,Exp. Share [Reverse Holo] #126,1,1,1,1,variant_quantity_gap,import_quantity_gap
+Korrina's Focus,128/163,Normal,Uncommon,1,Korrina's Focus #128,Korrina's Focus #128,Korrina's Focus #128,1,1,1,0,covered_exact,do_not_import
+Level Ball,129/163,Normal,Uncommon,1,Level Ball #129,Level Ball #129,Level Ball #129,1,1,1,0,covered_exact,do_not_import
+Level Ball,129/163,Reverse Holo,Uncommon,1,Level Ball [Reverse Holo] #129,Level Ball [Reverse Holo] #129,Level Ball #129,0,0,1,1,variant_quantity_gap,import_quantity_gap
+Phoebe,130/163,Normal,Uncommon,1,Phoebe #130,Phoebe #130,Phoebe #130,1,1,1,0,covered_exact,do_not_import
+Rapid Strike Scroll of Swirls,131/163,Normal,Uncommon,1,Rapid Strike Scroll of Swirls #131,Rapid Strike Scroll of Swirls #131,Rapid Strike Scroll of Swirls #131,1,1,1,0,covered_exact,do_not_import
+Rapid Strike Style Mustard,132/163,Normal,Uncommon,1,Rapid Strike Style Mustard #132,Rapid Strike Style Mustard #132,Rapid Strike Style Mustard #132,1,1,1,0,covered_exact,do_not_import
+Single Strike Scroll of Scorn,133/163,Normal,Uncommon,1,Single Strike Scroll of Scorn #133,Single Strike Scroll of Scorn #133,Single Strike Scroll of Scorn #133,1,1,1,0,covered_exact,do_not_import
+Single Strike Style Mustard,134/163,Normal,Uncommon,1,Single Strike Style Mustard #134,Single Strike Style Mustard #134,Single Strike Style Mustard #134,1,1,1,0,covered_exact,do_not_import
+Sordward and Shielbert,135/163,Normal,Uncommon,1,Sordward and Shielbert #135,Sordward and Shielbert #135,Sordward and Shielbert #135,1,1,1,0,covered_exact,do_not_import
+Tool Jammer,136/163,Normal,Uncommon,1,Tool Jammer #136,Tool Jammer #136,Tool Jammer #136; Tool Jammer [Reverse Holo] #136,1,1,2,0,covered_exact,do_not_import
+Tool Jammer,136/163,Reverse Holo,Uncommon,1,Tool Jammer [Reverse Holo] #136,Tool Jammer [Reverse Holo] #136,Tool Jammer #136; Tool Jammer [Reverse Holo] #136,1,1,2,0,covered_exact,do_not_import
+Tower of Darkness,137/163,Normal,Uncommon,1,Tower of Darkness #137,Tower of Darkness #137,Tower of Darkness [Reverse Holo] #137; Tower of Darkness #137,1,1,2,0,covered_exact,do_not_import
+Tower of Darkness,137/163,Reverse Holo,Uncommon,1,Tower of Darkness [Reverse Holo] #137,Tower of Darkness [Reverse Holo] #137,Tower of Darkness [Reverse Holo] #137; Tower of Darkness #137,1,1,2,0,covered_exact,do_not_import
+Tower of Waters,138/163,Normal,Uncommon,1,Tower of Waters #138,Tower of Waters #138,Tower of Waters #138,1,1,1,0,covered_exact,do_not_import
+Urn of Vitality,139/163,Normal,Uncommon,1,Urn of Vitality #139,Urn of Vitality #139,Urn of Vitality #139,1,1,1,0,covered_exact,do_not_import
+Rapid Strike Energy,140/163,Normal,Uncommon,1,Rapid Strike Energy #140,Rapid Strike Energy #140,Rapid Strike Energy #140,1,1,1,0,covered_exact,do_not_import
+Single Strike Energy,141/163,Normal,Uncommon,1,Single Strike Energy #141,Single Strike Energy #141,Single Strike Energy #141; Single Strike Energy [Reverse Holo] #141,1,1,2,0,covered_exact,do_not_import
+Single Strike Energy,141/163,Reverse Holo,Uncommon,1,Single Strike Energy [Reverse Holo] #141,Single Strike Energy [Reverse Holo] #141,Single Strike Energy #141; Single Strike Energy [Reverse Holo] #141,1,1,2,0,covered_exact,do_not_import
+Necrozma V,149/163,Normal Holo,Rare Ultra,1,Necrozma V [Holo] #149,Necrozma V #149,Necrozma V #149,0,1,1,0,covered_by_plain_scp_holo_name,do_not_import
+Korrina's Focus,160/163,Normal Holo,Rare Ultra,1,Korrina's Focus [Holo] #160,Korrina's Focus #160,,0,0,0,1,base_absent,import

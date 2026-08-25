@@ -52,10 +52,422 @@ load_dotenv(ENV_PATH)
 database.initialize()
 
 
+INVENTORY_COLUMN_CONFIG = {
+    "sku": st.column_config.TextColumn("SKU"),
+    "card_name": st.column_config.TextColumn("Card"),
+    "set_name": st.column_config.TextColumn("Set"),
+    "card_number": st.column_config.TextColumn("Card #"),
+    "condition": st.column_config.TextColumn("Type"),
+    "grader": st.column_config.TextColumn("Grader"),
+    "grade": st.column_config.TextColumn("Grade"),
+    "grading_status": st.column_config.TextColumn("Grading Status"),
+    "quantity": st.column_config.NumberColumn("Qty", format="%d"),
+    "cost": st.column_config.NumberColumn("Unit Cost", format="$%.2f"),
+    "allocated_cost_total": st.column_config.NumberColumn("Allocated Lot Cost", format="$%.2f"),
+    "market_price": st.column_config.NumberColumn("Market Value", format="$%.2f"),
+    "graded_8_price": st.column_config.NumberColumn("Graded 8 / 8.5", format="$%.2f"),
+    "graded_9_price": st.column_config.NumberColumn("Graded 9", format="$%.2f"),
+    "psa_10_price": st.column_config.NumberColumn("PSA 10 Value", format="$%.2f"),
+    "grade_prices_refreshed_at": st.column_config.DatetimeColumn("Prices Refreshed"),
+    "list_price": st.column_config.NumberColumn("List Price", format="$%.2f"),
+    "status": st.column_config.TextColumn("Status"),
+    "storage_location": st.column_config.TextColumn("Location"),
+}
+
+
 def sync_market_value(guide_prices: dict[str, float]) -> None:
     """Keep market value aligned with the selected SportsCardsPro price."""
     selected_basis = st.session_state.get("add_price_basis")
     st.session_state.add_market_value = float(guide_prices.get(selected_basis, 0.0))
+
+
+def card_identity(card: dict | pd.Series) -> tuple[str, str, str]:
+    return (
+        str(card.get("card_name", "")).strip().casefold(),
+        str(card.get("set_name", "")).strip().casefold(),
+        str(card.get("card_number", "")).strip().casefold(),
+    )
+
+
+def card_display_name(card: dict | pd.Series) -> str:
+    sku = str(card.get("sku", "") or "")
+    name = str(card.get("card_name", "") or "")
+    return f"{sku} — {name}" if sku else name
+
+
+def active_inventory(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    return frame[
+        (frame["quantity"].fillna(0).astype(int) > 0)
+        & (frame["status"].fillna("") != "Sold")
+    ].copy()
+
+
+def with_inventory_totals(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    valued = frame.copy()
+    for column in ["quantity", "cost", "allocated_cost_total", "market_price", "graded_9_price", "psa_10_price"]:
+        valued[column] = pd.to_numeric(valued[column], errors="coerce").fillna(0)
+    valued["cost_total"] = valued["allocated_cost_total"]
+    valued.loc[valued["cost_total"] == 0, "cost_total"] = (
+        valued["cost"] * valued["quantity"]
+    )
+    valued["market_total"] = valued["market_price"] * valued["quantity"]
+    valued["grade_9_total"] = valued["graded_9_price"] * valued["quantity"]
+    valued["psa_10_total"] = valued["psa_10_price"] * valued["quantity"]
+    valued["collection_type"] = valued["set_name"].map(collection_type)
+    return valued
+
+
+def duplicate_groups(cards: list[dict]) -> dict[tuple[str, str, str], list[dict]]:
+    groups: dict[tuple[str, str, str], list[dict]] = {}
+    for card in cards:
+        key = card_identity(card)
+        if any(key):
+            groups.setdefault(key, []).append(card)
+    return {key: rows for key, rows in groups.items() if len(rows) > 1}
+
+
+def duplicate_note(card: dict, groups: dict[tuple[str, str, str], list[dict]]) -> str:
+    matches = [
+        row for row in groups.get(card_identity(card), [])
+        if int(row.get("id") or 0) != int(card.get("id") or 0)
+    ]
+    if not matches:
+        return ""
+    summaries = [
+        f"{row.get('sku', '')} {row.get('condition', '')} {row.get('grader', '')} "
+        f"{row.get('grade', '')} {row.get('status', '')}".strip()
+        for row in matches[:3]
+    ]
+    extra = f" +{len(matches) - 3} more" if len(matches) > 3 else ""
+    return "; ".join(summaries) + extra
+
+
+def prepared_listing_card(card: dict, markup: float = 30.0) -> dict:
+    prepared = {
+        **card,
+        "listing_title": card.get("listing_title") or build_title(
+            card.get("card_name", ""),
+            card.get("set_name", ""),
+            card.get("grade", ""),
+            card.get("card_number", ""),
+            card.get("grader", ""),
+        ),
+        "listing_description": card.get("listing_description") or build_description(
+            card.get("card_name", ""),
+            card.get("set_name", ""),
+            card.get("condition", ""),
+            card.get("grade", ""),
+            card.get("notes", ""),
+            card.get("sku", ""),
+            card.get("grader", ""),
+            card.get("certification_number", ""),
+        ),
+        "list_price": card.get("list_price") or suggested_price(
+            card.get("market_price"), float(card.get("cost") or 0), markup
+        ),
+    }
+    prepared["readiness_issues"] = listing_readiness_issues(prepared)
+    return prepared
+
+
+def listing_stage(card: dict, issues: list[str]) -> str:
+    status = str(card.get("status") or "")
+    if status == "Sold":
+        return "Sold"
+    if status == "Listed" or card.get("ebay_item_id"):
+        return "Listed"
+    if any("image" in issue.casefold() for issue in issues):
+        return "Needs photos"
+    if any("price" in issue.casefold() for issue in issues):
+        return "Needs price"
+    if issues:
+        return "Needs details"
+    if status == "Ready":
+        return "Ready to list"
+    return "Draft ready"
+
+
+def listing_board_rows(cards: list[dict], markup: float = 30.0) -> list[dict]:
+    rows = []
+    for card in cards:
+        prepared = prepared_listing_card(card, markup)
+        issues = prepared["readiness_issues"]
+        rows.append({
+            "Stage": listing_stage(card, issues),
+            "SKU": card.get("sku", ""),
+            "Card": card.get("card_name", ""),
+            "Set": card.get("set_name", ""),
+            "Qty": int(card.get("quantity") or 0),
+            "Price": float(prepared.get("list_price") or 0),
+            "Status": card.get("status", ""),
+            "Missing": "; ".join(issues),
+        })
+    return rows
+
+
+def data_quality_sections(cards: list[dict], sales: list[dict], purchases: list[dict]) -> dict[str, pd.DataFrame]:
+    frame = pd.DataFrame(cards)
+    sales_frame = pd.DataFrame(sales)
+    purchases_frame = pd.DataFrame(purchases)
+    sections: dict[str, pd.DataFrame] = {}
+    if frame.empty:
+        return sections
+    active = active_inventory(frame)
+    numeric = with_inventory_totals(frame)
+    duplicate_keys = duplicate_groups(cards)
+    duplicate_rows = []
+    for rows in duplicate_keys.values():
+        for row in rows:
+            duplicate_rows.append({
+                "sku": row.get("sku", ""),
+                "card_name": row.get("card_name", ""),
+                "set_name": row.get("set_name", ""),
+                "card_number": row.get("card_number", ""),
+                "condition": row.get("condition", ""),
+                "grade": row.get("grade", ""),
+                "quantity": row.get("quantity", 0),
+                "status": row.get("status", ""),
+                "similar_rows": duplicate_note(row, duplicate_keys),
+            })
+    sections["Missing cost"] = active[
+        (pd.to_numeric(active["cost"], errors="coerce").fillna(0) <= 0)
+    ][["sku", "card_name", "set_name", "quantity", "cost", "status"]]
+    sections["Missing market value"] = active[
+        (pd.to_numeric(active["market_price"], errors="coerce").fillna(0) <= 0)
+    ][["sku", "card_name", "set_name", "quantity", "market_price", "status"]]
+    sections["Duplicate-looking cards"] = pd.DataFrame(duplicate_rows)
+    sections["Sold status with quantity"] = frame[
+        (frame["status"].fillna("") == "Sold")
+        & (pd.to_numeric(frame["quantity"], errors="coerce").fillna(0) > 0)
+    ][["sku", "card_name", "set_name", "quantity", "status"]]
+    raw_duplicate_rows = []
+    for row in active.to_dict("records"):
+        if row.get("condition") == "Graded":
+            continue
+        note = duplicate_note(row, duplicate_keys)
+        if note and any(word in note for word in ("Graded", "Sold", "PSA", "BGS", "SGC", "CGC")):
+            raw_duplicate_rows.append({
+                "sku": row.get("sku", ""),
+                "card_name": row.get("card_name", ""),
+                "set_name": row.get("set_name", ""),
+                "quantity": row.get("quantity", 0),
+                "similar_rows": note,
+            })
+    sections["Raw cards with graded/sold matches"] = pd.DataFrame(raw_duplicate_rows)
+    draft_rows = [
+        row for row in listing_board_rows(cards)
+        if row["Stage"] in {"Needs photos", "Needs price", "Needs details"}
+        and row["Status"] != "Sold"
+        and row["Qty"] > 0
+    ]
+    sections["Listing drafts needing work"] = pd.DataFrame(draft_rows)
+    if not sales_frame.empty and "card_id" in sales_frame:
+        sections["Unmatched sales"] = sales_frame[
+            sales_frame["card_id"].isna()
+        ][["sale_date", "marketplace", "order_number", "sku", "title", "quantity"]]
+    else:
+        sections["Unmatched sales"] = pd.DataFrame()
+    if not purchases_frame.empty:
+        sections["Unallocated purchases"] = purchases_frame[
+            purchases_frame["status"].fillna("") != "Allocated"
+        ][["purchase_date", "description", "set_name", "cards_expected", "total_cost", "status"]]
+    else:
+        sections["Unallocated purchases"] = pd.DataFrame()
+    return sections
+
+
+def render_home_dashboard() -> None:
+    st.subheader("Home dashboard")
+    cards = database.all_cards()
+    sales = database.all_sales()
+    purchases = database.all_purchases()
+    if not cards:
+        st.info("Add inventory to populate the dashboard.")
+        return
+    frame = with_inventory_totals(pd.DataFrame(cards))
+    active = active_inventory(frame)
+    sales_frame = pd.DataFrame(sales)
+    purchases_frame = pd.DataFrame(purchases)
+    active_cost = active["cost_total"].sum() if not active.empty else 0.0
+    active_market = active["market_total"].sum() if not active.empty else 0.0
+    active_listings = int((active["status"].fillna("") == "Listed").sum()) if not active.empty else 0
+    today = pd.Timestamp.today()
+    month_profit = 0.0
+    month_sales = 0
+    if not sales_frame.empty:
+        sale_dates = pd.to_datetime(sales_frame["sale_date"], errors="coerce")
+        this_month = sales_frame[
+            (sale_dates.dt.year == today.year) & (sale_dates.dt.month == today.month)
+        ]
+        month_sales = len(this_month)
+        month_profit = pd.to_numeric(this_month["profit"], errors="coerce").fillna(0).sum()
+    issue_sections = data_quality_sections(cards, sales, purchases)
+    missing_cost_count = len(issue_sections.get("Missing cost", pd.DataFrame()))
+    stale_prices = frame[
+        (frame["grade_prices_refreshed"].fillna(0).astype(int) == 0)
+        & (frame["quantity"].fillna(0).astype(int) > 0)
+    ]
+    grading_candidates = active[
+        (active["condition"].fillna("") != "Graded")
+        & (
+            (active["graded_8_price"].fillna(0) > 0)
+            | (active["graded_9_price"].fillna(0) > 0)
+            | (active["psa_10_price"].fillna(0) > 0)
+        )
+    ]
+
+    metrics = st.columns(4)
+    metrics[0].metric("Inventory cost", f"${active_cost:,.2f}")
+    metrics[1].metric("Market value", f"${active_market:,.2f}", f"${active_market - active_cost:,.2f}")
+    metrics[2].metric("Listed items", f"{active_listings:,}")
+    metrics[3].metric("Profit this month", f"${month_profit:,.2f}", f"{month_sales:,} sale(s)")
+    metrics_2 = st.columns(4)
+    metrics_2[0].metric("Active units", f"{int(active['quantity'].sum()) if not active.empty else 0:,}")
+    metrics_2[1].metric("Grading candidates", f"{len(grading_candidates):,}")
+    metrics_2[2].metric("Missing-cost rows", f"{missing_cost_count:,}")
+    metrics_2[3].metric("Stale price rows", f"{len(stale_prices):,}")
+
+    chart_left, chart_right = st.columns(2)
+    with chart_left:
+        st.markdown("#### Value by category")
+        if active.empty:
+            st.info("No active inventory.")
+        else:
+            type_summary = (
+                active.groupby("collection_type", dropna=False)
+                .agg(Cost=("cost_total", "sum"), Market=("market_total", "sum"))
+                .reset_index()
+                .rename(columns={"collection_type": "Category"})
+            )
+            st.bar_chart(type_summary.set_index("Category")[["Cost", "Market"]])
+    with chart_right:
+        st.markdown("#### Top unrealized gains")
+        if active.empty:
+            st.info("No active inventory.")
+        else:
+            gainers = active.copy()
+            gainers["unrealized_gain"] = gainers["market_total"] - gainers["cost_total"]
+            st.dataframe(
+                gainers.sort_values("unrealized_gain", ascending=False)
+                .head(10)[["sku", "card_name", "set_name", "cost_total", "market_total", "unrealized_gain"]],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "sku": st.column_config.TextColumn("SKU"),
+                    "card_name": st.column_config.TextColumn("Card"),
+                    "set_name": st.column_config.TextColumn("Set"),
+                    "cost_total": st.column_config.NumberColumn("Cost", format="$%.2f"),
+                    "market_total": st.column_config.NumberColumn("Market", format="$%.2f"),
+                    "unrealized_gain": st.column_config.NumberColumn("Gain", format="$%.2f"),
+                },
+            )
+
+    st.markdown("#### Action items")
+    action_rows = [
+        {"Area": name, "Open Items": len(frame)}
+        for name, frame in issue_sections.items()
+        if len(frame) > 0
+    ]
+    if action_rows:
+        st.dataframe(pd.DataFrame(action_rows), use_container_width=True, hide_index=True)
+    else:
+        st.success("No current data-quality action items.")
+
+
+def render_data_quality() -> None:
+    st.subheader("Data quality")
+    cards = database.all_cards()
+    sales = database.all_sales()
+    purchases = database.all_purchases()
+    sections = data_quality_sections(cards, sales, purchases)
+    if not sections:
+        st.info("No inventory data to inspect yet.")
+        return
+    summary = pd.DataFrame([
+        {"Check": name, "Rows": len(frame)}
+        for name, frame in sections.items()
+    ])
+    st.dataframe(summary, use_container_width=True, hide_index=True)
+    for name, frame in sections.items():
+        with st.expander(f"{name} ({len(frame):,})", expanded=len(frame) > 0):
+            if frame.empty:
+                st.success("No rows found.")
+                continue
+            st.dataframe(frame, use_container_width=True, hide_index=True)
+            st.download_button(
+                f"Download {name.lower()} CSV",
+                frame.to_csv(index=False).encode("utf-8"),
+                file_name=f"price_hunter_{name.lower().replace(' ', '_').replace('/', '_')}.csv",
+                mime="text/csv",
+                key=f"download_quality_{name}",
+            )
+
+
+def render_card_inspector(card: dict, all_cards: list[dict]) -> None:
+    duplicate_lookup = duplicate_groups(all_cards)
+    st.markdown("#### Card inspector")
+    left, right, third = st.columns(3)
+    left.metric("Unit cost", f"${float(card.get('cost') or 0):,.2f}")
+    right.metric("Market value", f"${float(card.get('market_price') or 0):,.2f}")
+    third.metric("List price", f"${float(card.get('list_price') or 0):,.2f}")
+    detail_rows = [
+        {"Field": "SKU", "Value": card.get("sku", "")},
+        {"Field": "Card", "Value": card.get("card_name", "")},
+        {"Field": "Set", "Value": card.get("set_name", "")},
+        {"Field": "Card #", "Value": card.get("card_number", "")},
+        {"Field": "Type", "Value": card.get("condition", "")},
+        {"Field": "Grade", "Value": f"{card.get('grader', '')} {card.get('grade', '')}".strip()},
+        {"Field": "Quantity", "Value": int(card.get("quantity") or 0)},
+        {"Field": "Status", "Value": card.get("status", "")},
+        {"Field": "Location", "Value": card.get("storage_location", "")},
+    ]
+    st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+    note = duplicate_note(card, duplicate_lookup)
+    if note:
+        st.warning(f"Similar inventory rows: {note}")
+    events = database.inventory_events(int(card["id"]), limit=25)
+    if events:
+        st.markdown("#### Recent activity")
+        st.dataframe(
+            pd.DataFrame(events)[["created_at", "event_type", "details", "quantity_change", "amount"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={"amount": st.column_config.NumberColumn("Amount", format="$%.2f")},
+        )
+
+
+def render_listing_readiness_board(cards: list[dict], markup: float = 30.0) -> None:
+    rows = listing_board_rows(cards, markup)
+    if not rows:
+        return
+    board = pd.DataFrame(rows)
+    stage_order = ["Needs photos", "Needs price", "Needs details", "Draft ready", "Ready to list", "Listed", "Sold"]
+    summary = (
+        board.groupby("Stage", dropna=False)
+        .agg(Items=("SKU", "count"), Quantity=("Qty", "sum"))
+        .reindex(stage_order)
+        .fillna(0)
+        .reset_index()
+    )
+    st.markdown("#### Listing readiness board")
+    st.dataframe(summary, use_container_width=True, hide_index=True)
+    stage_filter = st.multiselect(
+        "Listing stages",
+        stage_order,
+        default=[stage for stage in stage_order if stage != "Sold"],
+        key="listing_stage_filter",
+    )
+    visible = board[board["Stage"].isin(stage_filter)] if stage_filter else board.iloc[0:0]
+    st.dataframe(
+        visible,
+        use_container_width=True,
+        hide_index=True,
+        column_config={"Price": st.column_config.NumberColumn("Price", format="$%.2f")},
+    )
 
 
 def render_backup_restore() -> None:
@@ -132,7 +544,9 @@ with st.sidebar:
     st.caption("API requests are automatically limited to one per second.")
 
 (
+    home_tab,
     inventory_tab,
+    data_quality_tab,
     purchases_tab,
     allocation_tab,
     expenses_tab,
@@ -147,7 +561,9 @@ with st.sidebar:
     listing_tab,
 ) = st.tabs(
     [
+        "Home",
         "Inventory",
+        "Data quality",
         "Purchases",
         "Cost allocation",
         "Expenses",
@@ -162,6 +578,12 @@ with st.sidebar:
         "Listing studio",
     ]
 )
+
+with home_tab:
+    render_home_dashboard()
+
+with data_quality_tab:
+    render_data_quality()
 
 with purchases_tab:
     render_purchases()
@@ -632,7 +1054,18 @@ with inventory_tab:
             f"Grading-price coverage: {refreshed_count:,} of {len(frame):,} cards ({coverage:.1%}). "
             f"Last completed API refresh: {last_refreshed}."
         )
-        display_columns = ["sku", "card_name", "set_name", "card_number", "condition", "grader", "grade", "grading_status", "quantity", "cost", "allocated_cost_total", "market_price", "graded_8_price", "graded_9_price", "psa_10_price", "grade_prices_refreshed_at", "list_price", "status", "storage_location"]
+        duplicate_lookup = duplicate_groups(cards)
+        filtered_frame = filtered_frame.copy()
+        filtered_frame["similar_rows"] = filtered_frame.apply(
+            lambda row: duplicate_note(row, duplicate_lookup), axis=1
+        )
+        display_columns = [
+            "sku", "card_name", "set_name", "card_number", "condition", "grader",
+            "grade", "grading_status", "quantity", "cost", "allocated_cost_total",
+            "market_price", "graded_8_price", "graded_9_price", "psa_10_price",
+            "grade_prices_refreshed_at", "list_price", "status", "storage_location",
+            "similar_rows",
+        ]
         inventory_event = st.dataframe(
             filtered_frame[display_columns],
             use_container_width=True,
@@ -641,11 +1074,8 @@ with inventory_tab:
             on_select="rerun",
             selection_mode="multi-row",
             column_config={
-                "graded_8_price": st.column_config.NumberColumn("Graded 8 / 8.5", format="$%.2f"),
-                "graded_9_price": st.column_config.NumberColumn("Graded 9", format="$%.2f"),
-                "psa_10_price": st.column_config.NumberColumn("PSA 10", format="$%.2f"),
-                "allocated_cost_total": st.column_config.NumberColumn("Allocated cost total", format="$%.2f"),
-                "grade_prices_refreshed_at": st.column_config.DatetimeColumn("Prices refreshed"),
+                **INVENTORY_COLUMN_CONFIG,
+                "similar_rows": st.column_config.TextColumn("Similar Rows"),
             },
         )
         selected_positions = inventory_event.selection.rows
@@ -670,6 +1100,8 @@ with inventory_tab:
                 ):
                     price_refresh.start(refreshable, token)
                     st.rerun()
+            if len(selected_cards) == 1:
+                render_card_inspector(selected_cards[0], cards)
 
         with st.expander("Edit, bulk update, or delete selected inventory"):
             if not selected_cards:
@@ -1099,6 +1531,7 @@ with listing_tab:
             step=5.0,
             key="queue_markup",
         )
+        render_listing_readiness_board(cards, queue_markup)
         if st.button("Generate drafts for listing queue", disabled=not queue_cards):
             for queued_card in queue_cards:
                 database.update_card(queued_card["id"], {

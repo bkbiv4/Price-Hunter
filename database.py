@@ -1260,6 +1260,9 @@ def allocate_purchase(purchase_id: int, allocations: list[dict[str, Any]]) -> No
             )
         db.execute("DELETE FROM purchase_allocations WHERE purchase_id = ?", (purchase_id,))
         for allocation in allocations:
+            quantity = int(allocation["quantity"])
+            if quantity <= 0:
+                raise ValueError("Allocation quantity must be greater than zero.")
             db.execute(
                 """
                 INSERT INTO purchase_allocations (
@@ -1270,13 +1273,13 @@ def allocate_purchase(purchase_id: int, allocations: list[dict[str, Any]]) -> No
                 (
                     purchase_id,
                     allocation["card_id"],
-                    allocation["quantity"],
+                    quantity,
                     allocation["base_unit_cost"],
                     allocation["higher_cost_units"],
                     allocation["allocated_total"],
                 ),
             )
-            average_cost = round(allocation["allocated_total"] / allocation["quantity"], 2)
+            average_cost = round(allocation["allocated_total"] / quantity, 2)
             db.execute(
                 """
                 UPDATE cards

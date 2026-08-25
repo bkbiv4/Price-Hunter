@@ -4,8 +4,9 @@ from tempfile import TemporaryDirectory
 
 import database
 from business_imports import equal_card_allocations, read_ebay_workbook
+from business_ui import tax_summary_rows
 from ebay import EbayConfig, ebay_draft_row, listing_payloads, listing_readiness_issues
-from grading import grading_opportunity
+from grading import PSA_SERVICE_TIERS, grading_opportunity, psa_tier_for_value
 from receipt_scanner import allocate_receipt_amount, parse_receipt_text
 from sales import packing_slip_text
 from listings import build_description, build_title, suggested_price
@@ -155,6 +156,39 @@ Test card,318612614447,1,"$1,433.66","$1,325.00",$0.00,$102.69,$5.97,$220.94,$0.
         self.assertEqual(result["break_even_grade"], "9")
         self.assertEqual(result["expected_value"], 72.0)
         self.assertEqual(result["expected_profit"], 34.8)
+        self.assertEqual(result["grading_decision"], "Grade")
+
+    def test_psa_tier_selection_uses_declared_value_ceiling(self):
+        self.assertEqual(psa_tier_for_value(1500)["name"], "Regular")
+        self.assertEqual(psa_tier_for_value(1500.01)["name"], "Express")
+        self.assertEqual(psa_tier_for_value(5000)["name"], "Super Express")
+        self.assertEqual(psa_tier_for_value(10000)["name"], "Walk-Through")
+        self.assertIsNone(psa_tier_for_value(10000.01))
+
+    def test_grading_opportunity_uses_psa_tier_fee_and_declared_value(self):
+        tier = PSA_SERVICE_TIERS[1]
+        result = grading_opportunity(
+            {
+                "id": 1,
+                "sku": "PH-1",
+                "card_name": "Test",
+                "quantity": 1,
+                "cost": 100,
+                "market_price": 150,
+                "graded_8_price": 200,
+                "graded_9_price": 300,
+                "psa_10_price": 2000,
+            },
+            float(tier["fee"]),
+            0.10,
+            {"8 / 8.5": 0.2, "9": 0.5, "10": 0.3},
+            grading_tier=tier,
+            declared_value=2000,
+        )
+        self.assertEqual(result["recommended_tier"], "Express")
+        self.assertEqual(result["tier_fee"], 149.0)
+        self.assertTrue(result["tier_covered"])
+        self.assertEqual(result["declared_value"], 2000.0)
 
     def test_title_is_limited_to_80_characters(self):
         title = build_title("A" * 70, "B" * 30, "PSA 10")
@@ -459,6 +493,30 @@ class InventoryWorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             equal_card_allocations(10, [])
 
+    def test_equal_card_allocation_skips_zero_quantity_rows(self):
+        allocations = equal_card_allocations(
+            10.00,
+            [{"id": 1, "quantity": 0}, {"id": 2, "quantity": 2}],
+        )
+        self.assertEqual(len(allocations), 1)
+        self.assertEqual(allocations[0]["card_id"], 2)
+        self.assertEqual(allocations[0]["allocated_total"], 10.00)
+
+    def test_allocate_purchase_rejects_zero_quantity_allocation(self):
+        purchase_id = database.add_purchase({
+            "purchase_date": "2026-08-23",
+            "description": "Test allocation",
+            "total_cost": 10.0,
+        })
+        with self.assertRaises(ValueError):
+            database.allocate_purchase(purchase_id, [{
+                "card_id": self.card_id,
+                "quantity": 0,
+                "base_unit_cost": 0.0,
+                "higher_cost_units": 0,
+                "allocated_total": 0.0,
+            }])
+
     def test_ebay_payload_uses_saved_listing_and_policy_settings(self):
         config = EbayConfig(
             environment="Sandbox",
@@ -543,6 +601,40 @@ class InventoryWorkflowTests(unittest.TestCase):
         self.assertEqual(row["Custom label (SKU)"], "PH-1")
         self.assertEqual(row["Start price"], "12.30")
         self.assertEqual(row["PicURL"], "https://example.com/front.jpg")
+
+    def test_tax_summary_separates_cogs_expenses_and_inventory_cash(self):
+        import pandas as pd
+
+        purchases = pd.DataFrame([{
+            "total_cost": 120.0,
+            "tax": 7.0,
+            "shipping": 8.0,
+        }])
+        expenses = pd.DataFrame([{"total": 25.0}])
+        sales = pd.DataFrame([{
+            "item_subtotal": 100.0,
+            "shipping_charged": 5.0,
+            "refunded_amount": 10.0,
+            "tax_collected": 6.0,
+            "cost_of_goods": 40.0,
+            "fees": 12.0,
+            "promoted_listing_fees": 3.0,
+            "shipping_label_cost": 4.0,
+            "return_shipping_cost": 2.0,
+            "additional_expenses": 1.0,
+        }])
+
+        rows = {
+            row["Line Item"]: row["Amount"]
+            for row in tax_summary_rows(purchases, expenses, sales)
+        }
+
+        self.assertEqual(rows["Gross receipts before sales tax"], 95.0)
+        self.assertEqual(rows["Tax collected from buyers"], 6.0)
+        self.assertEqual(rows["COGS from matched sales"], 40.0)
+        self.assertEqual(rows["Business expenses"], 25.0)
+        self.assertEqual(rows["Estimated net before owner tax review"], 8.0)
+        self.assertEqual(rows["Inventory purchases paid"], 120.0)
 
 
 if __name__ == "__main__":

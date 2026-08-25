@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 import database
-from grading import grading_opportunity
+from grading import PSA_SERVICE_TIERS, grading_opportunity, psa_declared_value, psa_tier_for_value
 from receipt_scanner import allocate_receipt_amount, scan_receipt_image, scan_receipt_pdf
 from sales import packing_slip_text
 from business_imports import (
@@ -25,8 +26,6 @@ from sportscardspro import matches_terms
 
 RECEIPT_DIR = Path(__file__).with_name("data") / "receipts"
 RECEIPT_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
-
-
 def _normalized_reference(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
@@ -84,6 +83,156 @@ def _preview_import(
         if st.button(button_label, key=f"{uploader_key}_import", type="primary"):
             inserted = importer(rows)
             st.success(f"Imported {inserted:,} new rows; existing duplicates were skipped.")
+
+
+def _date_filtered(frame: pd.DataFrame, column: str, start: date, end: date) -> pd.DataFrame:
+    if frame.empty or column not in frame:
+        return frame
+    dated = frame.copy()
+    dated["_report_date"] = pd.to_datetime(dated[column], errors="coerce")
+    return dated[dated["_report_date"].dt.date.between(start, end)]
+
+
+def tax_summary_rows(
+    purchases: pd.DataFrame,
+    expenses: pd.DataFrame,
+    sales: pd.DataFrame,
+) -> list[dict[str, Any]]:
+    sale_value = lambda column: sales[column].sum() if not sales.empty and column in sales else 0.0
+    purchase_value = lambda column: purchases[column].sum() if not purchases.empty and column in purchases else 0.0
+    expense_value = lambda column: expenses[column].sum() if not expenses.empty and column in expenses else 0.0
+
+    gross_sales = sale_value("item_subtotal")
+    shipping_income = sale_value("shipping_charged")
+    refunds = sale_value("refunded_amount")
+    tax_collected = sale_value("tax_collected")
+    gross_receipts = gross_sales + shipping_income - refunds
+    cogs = sale_value("cost_of_goods")
+    marketplace_fees = sale_value("fees")
+    promoted_fees = sale_value("promoted_listing_fees")
+    shipping_labels = sale_value("shipping_label_cost")
+    return_shipping = sale_value("return_shipping_cost")
+    additional_sale_expenses = sale_value("additional_expenses")
+    business_expenses = expense_value("total")
+    estimated_net = (
+        gross_receipts
+        - cogs
+        - marketplace_fees
+        - promoted_fees
+        - shipping_labels
+        - return_shipping
+        - additional_sale_expenses
+        - business_expenses
+    )
+
+    return [
+        {"Section": "Sales", "Line Item": "Gross card sales", "Amount": round(gross_sales, 2)},
+        {"Section": "Sales", "Line Item": "Shipping charged to buyers", "Amount": round(shipping_income, 2)},
+        {"Section": "Sales", "Line Item": "Refunds and returns", "Amount": round(-refunds, 2)},
+        {"Section": "Sales", "Line Item": "Tax collected from buyers", "Amount": round(tax_collected, 2)},
+        {"Section": "Sales", "Line Item": "Gross receipts before sales tax", "Amount": round(gross_receipts, 2)},
+        {"Section": "Cost of goods sold", "Line Item": "COGS from matched sales", "Amount": round(cogs, 2)},
+        {"Section": "Cost of goods sold", "Line Item": "Gross profit after COGS", "Amount": round(gross_receipts - cogs, 2)},
+        {"Section": "Selling costs", "Line Item": "Marketplace fees", "Amount": round(marketplace_fees, 2)},
+        {"Section": "Selling costs", "Line Item": "Promoted listing fees", "Amount": round(promoted_fees, 2)},
+        {"Section": "Selling costs", "Line Item": "Shipping labels", "Amount": round(shipping_labels, 2)},
+        {"Section": "Selling costs", "Line Item": "Return shipping", "Amount": round(return_shipping, 2)},
+        {"Section": "Selling costs", "Line Item": "Additional sale expenses", "Amount": round(additional_sale_expenses, 2)},
+        {"Section": "Operating expenses", "Line Item": "Business expenses", "Amount": round(business_expenses, 2)},
+        {"Section": "Planning total", "Line Item": "Estimated net before owner tax review", "Amount": round(estimated_net, 2)},
+        {"Section": "Inventory cash flow", "Line Item": "Inventory purchases paid", "Amount": round(purchase_value("total_cost"), 2)},
+        {"Section": "Inventory cash flow", "Line Item": "Inventory purchase tax", "Amount": round(purchase_value("tax"), 2)},
+        {"Section": "Inventory cash flow", "Line Item": "Inventory purchase shipping", "Amount": round(purchase_value("shipping"), 2)},
+    ]
+
+
+def render_tax_summary(
+    purchases: pd.DataFrame,
+    expenses: pd.DataFrame,
+    sales: pd.DataFrame,
+) -> None:
+    st.markdown("#### Tax prep summary")
+    st.caption(
+        "Planning view only. Inventory purchases are shown as cash spent separately from COGS "
+        "because tax treatment depends on your accounting method and year-end inventory."
+    )
+    current_year = pd.Timestamp.today().year
+    years = set()
+    for frame, column in ((purchases, "purchase_date"), (expenses, "expense_date"), (sales, "sale_date")):
+        if not frame.empty and column in frame:
+            dates = pd.to_datetime(frame[column], errors="coerce").dropna()
+            years.update(int(value.year) for value in dates)
+    year_options = sorted(years or {current_year}, reverse=True)
+    selected_year = st.selectbox("Tax year", year_options, index=0, key="tax_summary_year")
+    start_date = date(selected_year, 1, 1)
+    end_date = date(selected_year, 12, 31)
+
+    filtered_purchases = _date_filtered(purchases, "purchase_date", start_date, end_date)
+    filtered_expenses = _date_filtered(expenses, "expense_date", start_date, end_date)
+    filtered_sales = _date_filtered(sales, "sale_date", start_date, end_date)
+    summary = pd.DataFrame(tax_summary_rows(filtered_purchases, filtered_expenses, filtered_sales))
+    summary_pivot = (
+        summary.pivot_table(index="Section", values="Amount", aggfunc="sum")
+        .reset_index()
+        .rename(columns={"Amount": "Section Total"})
+    )
+
+    key_amounts = {row["Line Item"]: row["Amount"] for row in summary.to_dict("records")}
+    metrics = st.columns(4)
+    metrics[0].metric("Gross receipts", f"${key_amounts['Gross receipts before sales tax']:,.2f}")
+    metrics[1].metric("COGS", f"${key_amounts['COGS from matched sales']:,.2f}")
+    metrics[2].metric("Business expenses", f"${key_amounts['Business expenses']:,.2f}")
+    metrics[3].metric("Estimated net", f"${key_amounts['Estimated net before owner tax review']:,.2f}")
+
+    st.dataframe(
+        summary,
+        use_container_width=True,
+        hide_index=True,
+        column_config={"Amount": st.column_config.NumberColumn("Amount", format="$%.2f")},
+    )
+    st.dataframe(
+        summary_pivot,
+        use_container_width=True,
+        hide_index=True,
+        column_config={"Section Total": st.column_config.NumberColumn("Section Total", format="$%.2f")},
+    )
+
+    if not filtered_expenses.empty:
+        expense_summary = (
+            filtered_expenses.groupby("category", dropna=False)
+            .agg(Records=("id", "count"), Total=("total", "sum"))
+            .reset_index()
+            .sort_values("Total", ascending=False)
+        )
+        st.markdown("#### Expense category detail")
+        st.dataframe(
+            expense_summary,
+            use_container_width=True,
+            hide_index=True,
+            column_config={"Total": st.column_config.NumberColumn("Total", format="$%.2f")},
+        )
+
+    export_columns = st.columns(3)
+    export_columns[0].download_button(
+        "Download tax summary CSV",
+        summary.to_csv(index=False).encode("utf-8"),
+        file_name=f"price_hunter_tax_summary_{selected_year}.csv",
+        mime="text/csv",
+    )
+    export_columns[1].download_button(
+        "Download sales detail CSV",
+        filtered_sales.to_csv(index=False).encode("utf-8"),
+        file_name=f"price_hunter_tax_sales_{selected_year}.csv",
+        mime="text/csv",
+        disabled=filtered_sales.empty,
+    )
+    export_columns[2].download_button(
+        "Download expenses detail CSV",
+        filtered_expenses.to_csv(index=False).encode("utf-8"),
+        file_name=f"price_hunter_tax_expenses_{selected_year}.csv",
+        mime="text/csv",
+        disabled=filtered_expenses.empty,
+    )
 
 
 def render_purchases() -> None:
@@ -552,6 +701,7 @@ def render_allocation() -> None:
         for card in database.all_cards()
         if card["id"] not in allocated_elsewhere
         and matches_terms(card.get("set_name"), set_filter)
+        and int(card.get("quantity") or 0) > 0
     ]
     physical_count = sum(int(card["quantity"]) for card in available_cards)
     expected = int(purchase.get("cards_expected") or 0)
@@ -591,13 +741,16 @@ def render_allocation() -> None:
         type="primary",
         key=f"allocate_{purchase['id']}",
     ):
-        allocations = equal_card_allocations(purchase["total_cost"], selected_cards)
-        database.allocate_purchase(purchase["id"], allocations)
-        st.success(
-            f"Allocated ${sum(row['allocated_total'] for row in allocations):,.2f} "
-            f"across {selected_units:,} physical cards."
-        )
-        st.rerun()
+        try:
+            allocations = equal_card_allocations(purchase["total_cost"], selected_cards)
+            database.allocate_purchase(purchase["id"], allocations)
+            st.success(
+                f"Allocated ${sum(row['allocated_total'] for row in allocations):,.2f} "
+                f"across {selected_units:,} physical cards."
+            )
+            st.rerun()
+        except ValueError as exc:
+            st.error(str(exc))
 
     if existing:
         allocation_frame = pd.DataFrame(existing)
@@ -1304,24 +1457,55 @@ def render_grading() -> None:
         "Ranks ungraded inventory by probability-weighted profit. Estimates are planning tools, "
         "not guaranteed grades or sale prices."
     )
-    settings = st.columns(5)
-    grading_cost = settings[0].number_input(
-        "Estimated cost per card", min_value=0.0, value=30.0, format="%.2f",
+    tier_frame = pd.DataFrame(PSA_SERVICE_TIERS)
+    tier_frame = tier_frame.rename(columns={
+        "name": "Tier",
+        "fee": "Fee",
+        "max_declared_value": "Max declared value",
+        "turnaround": "Turnaround",
+    })
+    with st.expander("PSA service tiers"):
+        st.dataframe(
+            tier_frame,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Fee": st.column_config.NumberColumn("Fee", format="$%.2f"),
+                "Max declared value": st.column_config.NumberColumn(
+                    "Max declared value", format="$%.0f"
+                ),
+            },
+        )
+    settings = st.columns(4)
+    use_psa_tiers = settings[0].checkbox(
+        "Use PSA tier fees",
+        value=True,
+        key="opportunity_use_psa_tiers",
+    )
+    declared_value_basis = settings[1].selectbox(
+        "Declared value basis",
+        ["PSA 10 value", "Expected value", "Grade 9 value", "Highest available graded value"],
+        key="opportunity_declared_value_basis",
+    )
+    manual_grading_cost = settings[2].number_input(
+        "Manual cost per card", min_value=0.0, value=30.0, format="%.2f",
+        disabled=use_psa_tiers,
         key="opportunity_grading_cost",
     )
-    selling_cost_percent = settings[1].number_input(
+    selling_cost_percent = settings[3].number_input(
         "Selling costs %", min_value=0.0, max_value=100.0, value=15.0, format="%.1f",
         key="opportunity_selling_cost",
     )
-    probability_8 = settings[2].number_input(
+    probability_settings = st.columns(3)
+    probability_8 = probability_settings[0].number_input(
         "Chance of 8/8.5 %", min_value=0.0, max_value=100.0, value=20.0, format="%.1f",
         key="opportunity_probability_8",
     )
-    probability_9 = settings[3].number_input(
+    probability_9 = probability_settings[1].number_input(
         "Chance of 9 %", min_value=0.0, max_value=100.0, value=50.0, format="%.1f",
         key="opportunity_probability_9",
     )
-    probability_10 = settings[4].number_input(
+    probability_10 = probability_settings[2].number_input(
         "Chance of 10 %", min_value=0.0, max_value=100.0, value=30.0, format="%.1f",
         key="opportunity_probability_10",
     )
@@ -1336,19 +1520,45 @@ def render_grading() -> None:
     elif not candidates:
         st.info("No ungraded cards with fetched graded prices are available for analysis.")
     else:
-        opportunity_rows = [
-            grading_opportunity(
+        probabilities = {
+            "8 / 8.5": probability_8 / 100,
+            "9": probability_9 / 100,
+            "10": probability_10 / 100,
+        }
+        opportunity_rows = []
+        for card in candidates:
+            grade_values = {
+                "8 / 8.5": float(card.get("graded_8_price") or 0),
+                "9": float(card.get("graded_9_price") or 0),
+                "10": float(card.get("psa_10_price") or 0),
+            }
+            expected_declared_value = sum(
+                grade_values[grade] * probabilities[grade] for grade in grade_values
+            )
+            declared_value = (
+                expected_declared_value
+                if declared_value_basis == "Expected value"
+                else psa_declared_value(card, declared_value_basis)
+            )
+            recommended_tier = psa_tier_for_value(declared_value) if use_psa_tiers else None
+            grading_cost = (
+                float(recommended_tier["fee"])
+                if recommended_tier
+                else float(manual_grading_cost)
+            )
+            row = grading_opportunity(
                 card,
                 grading_cost,
                 selling_cost_percent / 100,
-                {
-                    "8 / 8.5": probability_8 / 100,
-                    "9": probability_9 / 100,
-                    "10": probability_10 / 100,
-                },
+                probabilities,
+                grading_tier=recommended_tier,
+                declared_value=declared_value,
             )
-            for card in candidates
-        ]
+            if use_psa_tiers and recommended_tier is None:
+                row["recommended_tier"] = "Above Walk-Through"
+                row["tier_covered"] = False
+                row["grading_decision"] = "Review"
+            opportunity_rows.append(row)
         opportunity_frame = pd.DataFrame(opportunity_rows).sort_values(
             ["expected_profit", "psa_10_profit"], ascending=False
         )
@@ -1364,10 +1574,15 @@ def render_grading() -> None:
             metrics = st.columns(3)
             metrics[0].metric("Cards analyzed", f"{len(opportunity_frame):,}")
             metrics[1].metric("Best candidate", top["card_name"])
-            metrics[2].metric("Best expected profit", f"${top['expected_profit']:,.2f}")
+            metrics[2].metric(
+                "Best tier / expected profit",
+                top["recommended_tier"],
+                f"${top['expected_profit']:,.2f}",
+            )
             money_columns = [
                 "cost_basis", "raw_value", "grade_8_value", "grade_9_value", "psa_10_value",
-                "grading_cost", "grade_8_profit", "grade_9_profit", "psa_10_profit",
+                "declared_value", "tier_fee", "tier_max_value", "grading_cost",
+                "grade_8_profit", "grade_9_profit", "psa_10_profit",
                 "expected_value", "expected_profit", "expected_uplift_vs_raw",
             ]
             st.dataframe(
@@ -1630,6 +1845,8 @@ def render_reports() -> None:
     c2.metric("Business expenses", f"${expense_total:,.2f}")
     c3.metric("eBay net proceeds", f"${sales_net:,.2f}")
     c4.metric("Linked receipts", f"{linked_receipts:,}")
+
+    render_tax_summary(purchases, expenses, sales)
 
     report_left, report_right = st.columns(2)
     with report_left:
