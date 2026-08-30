@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from sportscardspro import extract_card_number
+
 
 REQUIRED_COLUMNS = {
     "id",
@@ -65,7 +67,6 @@ def collection_row_to_card(row: dict[str, Any]) -> dict[str, Any]:
     include = _text(row.get("include-string")) or "Ungraded"
     condition, grader, grade = _grade_details(include, _text(row.get("grading-company")))
     card_name = _text(row.get("product-name"))
-    number_match = re.search(r"#([^\s\]]+)$", card_name)
     notes = " — ".join(
         part for part in (_text(row.get("condition-string")), _text(row.get("notes"))) if part
     )
@@ -74,7 +75,7 @@ def collection_row_to_card(row: dict[str, Any]) -> dict[str, Any]:
         "scp_id": _text(row.get("id")),
         "card_name": card_name,
         "set_name": _text(row.get("console-name")),
-        "card_number": number_match.group(1) if number_match else "",
+        "card_number": extract_card_number(card_name),
         "condition": condition,
         "grader": grader,
         "grade": grade,

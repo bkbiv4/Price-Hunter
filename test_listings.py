@@ -11,13 +11,19 @@ from receipt_scanner import allocate_receipt_amount, parse_receipt_text
 from sales import packing_slip_text
 from listings import build_description, build_title, suggested_price
 from scp_import import collection_row_to_card, collection_type, import_identity
-from sportscardspro import available_prices, build_card_search_query, inventory_grade_prices, matches_parallel, matches_terms, product_price_row, select_product_match
+from sportscardspro import available_prices, build_card_search_query, extract_card_number, inventory_grade_prices, matches_parallel, matches_terms, product_price_row, select_product_match
 from sportscardspro import SportsCardsProClient
 from unittest.mock import patch
 from tcgcollector_import import pokemon_identity, reconcile_collection_rows, tcgcollector_row_to_card
 
 
 class ListingRulesTests(unittest.TestCase):
+    def test_card_number_parser_supports_one_piece_codes(self):
+        self.assertEqual(extract_card_number("Black Vortex [Foil] OP09-097"), "OP09-097")
+        self.assertEqual(extract_card_number("Sabo [Foil] P-073"), "P-073")
+        self.assertEqual(extract_card_number("Patrick Mahomes #340"), "340")
+        self.assertEqual(extract_card_number("DON!! Card [Luffy]"), "")
+
     def test_sportscardspro_match_requires_exact_pokemon_identity(self):
         card = {
             "card_name": "Gloom [Reverse Holo] #2",
@@ -375,7 +381,7 @@ class InventoryWorkflowTests(unittest.TestCase):
         self.assertEqual(updated_purchase["cards_expected"], 120)
         self.assertEqual(updated_purchase["total_cost"], 127.0)
 
-    def test_returned_grade_updates_cost_market_value_and_history(self):
+    def test_returned_grade_updates_separate_grading_cost_market_value_and_history(self):
         submission_id = database.create_grading_submission(
             {
                 "submission_number": "PSA-1",
@@ -397,7 +403,7 @@ class InventoryWorkflowTests(unittest.TestCase):
         )
         card = database.get_card(self.card_id)
         self.assertEqual((card["condition"], card["grader"], card["grade"]), ("Graded", "PSA", "10"))
-        self.assertEqual((card["cost"], card["market_price"]), (34.0, 100.0))
+        self.assertEqual((card["cost"], card["grading_cost"], card["market_price"]), (10.0, 24.0, 100.0))
         self.assertEqual(database.inventory_events(self.card_id)[0]["event_type"], "Grade received")
         database.update_grading_submission(
             submission_id,
@@ -405,7 +411,66 @@ class InventoryWorkflowTests(unittest.TestCase):
             "2026-07-27",
             [{"item_id": item["id"], "grade": "10", "certification_number": "123"}],
         )
-        self.assertEqual(database.get_card(self.card_id)["cost"], 34.0)
+        card = database.get_card(self.card_id)
+        self.assertEqual((card["cost"], card["grading_cost"]), (10.0, 24.0))
+
+    def test_purchase_allocation_does_not_change_grading_cost(self):
+        database.update_card(self.card_id, {"grading_cost": 7.5})
+        purchase_id = database.add_purchase({
+            "purchase_date": "2026-08-25", "description": "Card lot", "total_cost": 40.0,
+        })
+        database.allocate_purchase(purchase_id, [{
+            "card_id": self.card_id, "quantity": 2, "base_unit_cost": 20.0,
+            "higher_cost_units": 0, "allocated_total": 40.0,
+        }])
+        card = database.get_card(self.card_id)
+        self.assertEqual((card["cost"], card["grading_cost"]), (20.0, 7.5))
+
+    def test_bulk_update_can_set_acquisition_and_grading_costs(self):
+        second_card_id = database.add_card({
+            "card_name": "Second Card", "set_name": "Test Set", "quantity": 1,
+            "cost": 1.0, "grading_cost": 2.0,
+        })
+        updated = database.update_cards(
+            [self.card_id, second_card_id], {"cost": 12.5, "grading_cost": 4.25}
+        )
+        self.assertEqual(updated, 2)
+        for card_id in (self.card_id, second_card_id):
+            card = database.get_card(card_id)
+            self.assertEqual((card["cost"], card["grading_cost"]), (12.5, 4.25))
+
+    def test_split_card_preserves_ungraded_remainder_and_creates_graded_row(self):
+        new_id = database.split_card(self.card_id, 1, {
+            "condition": "Graded", "grader": "PSA", "grade": "9",
+            "certification_number": "123", "grading_cost": 20.0,
+        })
+        original = database.get_card(self.card_id)
+        graded = database.get_card(new_id)
+        self.assertEqual((original["quantity"], original["condition"]), (1, "Ungraded"))
+        self.assertEqual(
+            (graded["quantity"], graded["condition"], graded["grader"], graded["grade"]),
+            (1, "Graded", "PSA", "9"),
+        )
+        self.assertNotEqual(original["sku"], graded["sku"])
+
+    def test_sale_cogs_includes_acquisition_and_grading_cost(self):
+        database.update_card(self.card_id, {"grading_cost": 5.0})
+        sale_id = database.create_manual_sale(self.card_id, {
+            "sale_date": "2026-08-25", "marketplace": "Cash", "title": "Test Player",
+            "quantity": 1, "item_subtotal": 30.0, "shipping_charged": 0.0,
+            "fees": 0.0, "promoted_listing_fees": 0.0, "shipping_label_cost": 0.0,
+        })
+        sale = next(row for row in database.all_sales() if row["id"] == sale_id)
+        self.assertEqual((sale["cost_of_goods"], sale["profit"]), (15.0, 15.0))
+
+        database.update_card(self.card_id, {"grading_cost": 8.0})
+        updated_sale = next(row for row in database.all_sales() if row["id"] == sale_id)
+        item = database.sale_items(sale_id)[0]
+        self.assertEqual((updated_sale["cost_of_goods"], updated_sale["profit"]), (18.0, 12.0))
+        self.assertEqual(
+            (item["acquisition_unit_cost"], item["grading_unit_cost"], item["unit_cost"]),
+            (10.0, 8.0, 18.0),
+        )
 
     def test_lot_sale_and_return_restore_inventory_only_once(self):
         second_card_id = database.add_card({
@@ -516,6 +581,64 @@ class InventoryWorkflowTests(unittest.TestCase):
                 "higher_cost_units": 0,
                 "allocated_total": 0.0,
             }])
+
+    def test_multiple_purchases_can_allocate_distinct_units_of_one_inventory_row(self):
+        first_purchase = database.add_purchase({
+            "purchase_date": "2026-08-26", "description": "First box", "total_cost": 10.0,
+        })
+        second_purchase = database.add_purchase({
+            "purchase_date": "2026-08-26", "description": "Second box", "total_cost": 20.0,
+        })
+        database.allocate_purchase(first_purchase, [{
+            "card_id": self.card_id, "quantity": 1, "base_unit_cost": 10.0,
+            "higher_cost_units": 0, "allocated_total": 10.0,
+        }])
+        self.assertEqual(database.allocated_card_quantities(), {self.card_id: 1})
+        database.allocate_purchase(second_purchase, [{
+            "card_id": self.card_id, "quantity": 1, "base_unit_cost": 20.0,
+            "higher_cost_units": 0, "allocated_total": 20.0,
+        }])
+        card = database.get_card(self.card_id)
+        self.assertEqual(database.allocated_card_quantities(), {self.card_id: 2})
+        self.assertEqual((card["cost"], card["allocated_cost_total"]), (15.0, 30.0))
+
+    def test_purchase_allocation_rejects_more_units_than_inventory(self):
+        first_purchase = database.add_purchase({
+            "purchase_date": "2026-08-26", "description": "First box", "total_cost": 10.0,
+        })
+        second_purchase = database.add_purchase({
+            "purchase_date": "2026-08-26", "description": "Second box", "total_cost": 20.0,
+        })
+        database.allocate_purchase(first_purchase, [{
+            "card_id": self.card_id, "quantity": 2, "base_unit_cost": 5.0,
+            "higher_cost_units": 0, "allocated_total": 10.0,
+        }])
+        with self.assertRaises(ValueError):
+            database.allocate_purchase(second_purchase, [{
+                "card_id": self.card_id, "quantity": 1, "base_unit_cost": 20.0,
+                "higher_cost_units": 0, "allocated_total": 20.0,
+            }])
+
+    def test_combined_purchase_allocation_reserves_cards_once_and_reconciles_costs(self):
+        first_purchase = database.add_purchase({
+            "purchase_date": "2026-08-26", "description": "Booster bundle", "total_cost": 10.0,
+        })
+        second_purchase = database.add_purchase({
+            "purchase_date": "2026-08-26", "description": "Tin display", "total_cost": 20.0,
+        })
+        combined = equal_card_allocations(30.0, [database.get_card(self.card_id)])
+        database.allocate_purchases([first_purchase, second_purchase], combined)
+        self.assertEqual(database.allocated_card_quantities(), {self.card_id: 2})
+        card = database.get_card(self.card_id)
+        self.assertEqual((card["cost"], card["allocated_cost_total"]), (15.0, 30.0))
+        self.assertEqual(
+            sum(row["allocated_total"] for row in database.purchase_allocations(first_purchase)),
+            10.0,
+        )
+        self.assertEqual(
+            sum(row["allocated_total"] for row in database.purchase_allocations(second_purchase)),
+            20.0,
+        )
 
     def test_ebay_payload_uses_saved_listing_and_policy_settings(self):
         config = EbayConfig(

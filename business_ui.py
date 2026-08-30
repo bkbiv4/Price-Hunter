@@ -684,27 +684,42 @@ def render_allocation() -> None:
         f"P-{purchase['id']:05d} — {purchase['description']} (${purchase['total_cost']:,.2f})": purchase
         for purchase in purchases
     }
-    selected_label = st.selectbox("Purchase", choices)
-    purchase = choices[selected_label]
-    existing = database.purchase_allocations(purchase["id"])
-    current_ids = {row["card_id"] for row in existing}
-    allocated_elsewhere = database.allocated_card_ids() - current_ids
+    selected_labels = st.multiselect(
+        "Purchases to combine",
+        choices,
+        default=[next(iter(choices))],
+        help="Select multiple purchases when their costs should be pooled across the same inventory cards.",
+    )
+    if not selected_labels:
+        st.info("Choose one or more purchases to allocate.")
+        return
+    selected_purchases = [choices[label] for label in selected_labels]
+    purchase_ids = [int(purchase["id"]) for purchase in selected_purchases]
+    existing = [
+        row for purchase_id in purchase_ids
+        for row in database.purchase_allocations(purchase_id)
+    ]
+    allocated_elsewhere = database.allocated_card_quantities(
+        exclude_purchase_ids=purchase_ids
+    )
 
     set_filter = st.text_input(
         "Inventory set must contain these words",
-        value=purchase["set_name"],
-        key=f"allocation_set_{purchase['id']}",
+        value=selected_purchases[0]["set_name"],
+        key=f"allocation_set_{'_'.join(map(str, purchase_ids))}",
         help="Adjust this when the spreadsheet and SportsCardsPro use different set names.",
     )
-    available_cards = [
-        card
-        for card in database.all_cards()
-        if card["id"] not in allocated_elsewhere
-        and matches_terms(card.get("set_name"), set_filter)
-        and int(card.get("quantity") or 0) > 0
-    ]
+    available_cards = []
+    for card in database.all_cards():
+        available_quantity = max(
+            0,
+            int(card.get("quantity") or 0) - allocated_elsewhere.get(int(card["id"]), 0),
+        )
+        if available_quantity and matches_terms(card.get("set_name"), set_filter):
+            available_cards.append({**card, "quantity": available_quantity})
     physical_count = sum(int(card["quantity"]) for card in available_cards)
-    expected = int(purchase.get("cards_expected") or 0)
+    expected = sum(int(purchase.get("cards_expected") or 0) for purchase in selected_purchases)
+    combined_cost = sum(float(purchase.get("total_cost") or 0) for purchase in selected_purchases)
     st.write(
         f"{len(available_cards):,} inventory rows / {physical_count:,} physical cards match. "
         f"The purchase workbook expects {expected:,} cards."
@@ -712,7 +727,7 @@ def render_allocation() -> None:
     select_all = st.checkbox(
         "Allocate across every matching card",
         value=True,
-        key=f"allocation_all_{purchase['id']}",
+        key=f"allocation_all_{'_'.join(map(str, purchase_ids))}",
     )
     card_choices = {
         f"{card['sku']} — {card['card_name']} (qty {card['quantity']})": card
@@ -724,26 +739,27 @@ def render_allocation() -> None:
         selected_card_labels = st.multiselect(
             "Cards included in this purchase",
             card_choices,
-            key=f"allocation_cards_{purchase['id']}",
+            key=f"allocation_cards_{'_'.join(map(str, purchase_ids))}",
         )
         selected_cards = [card_choices[label] for label in selected_card_labels]
 
     selected_units = sum(int(card["quantity"]) for card in selected_cards)
     if selected_units:
-        average = purchase["total_cost"] / selected_units
+        average = combined_cost / selected_units
         st.info(
-            f"${purchase['total_cost']:,.2f} will be allocated across {selected_units:,} cards "
+            f"${combined_cost:,.2f} from {len(selected_purchases):,} purchase(s) will be allocated "
+            f"across {selected_units:,} cards "
             f"at approximately ${average:,.2f} each."
         )
     if st.button(
         "Apply equal allocation",
         disabled=not selected_cards,
         type="primary",
-        key=f"allocate_{purchase['id']}",
+        key=f"allocate_{'_'.join(map(str, purchase_ids))}",
     ):
         try:
-            allocations = equal_card_allocations(purchase["total_cost"], selected_cards)
-            database.allocate_purchase(purchase["id"], allocations)
+            allocations = equal_card_allocations(combined_cost, selected_cards)
+            database.allocate_purchases(purchase_ids, allocations)
             st.success(
                 f"Allocated ${sum(row['allocated_total'] for row in allocations):,.2f} "
                 f"across {selected_units:,} physical cards."
@@ -757,7 +773,7 @@ def render_allocation() -> None:
         st.dataframe(
             allocation_frame[
                 [
-                    "sku", "card_name", "quantity", "base_unit_cost",
+                    "purchase_description", "sku", "card_name", "quantity", "base_unit_cost",
                     "higher_cost_units", "allocated_total",
                 ]
             ],

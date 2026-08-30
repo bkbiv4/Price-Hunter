@@ -64,7 +64,7 @@ def grading_opportunity(
 ) -> dict[str, Any]:
     """Estimate grading outcomes for one inventory card."""
     quantity = max(1, int(card.get("quantity") or 1))
-    cost_basis = float(card.get("cost") or 0)
+    cost_basis = float(card.get("cost") or 0) + float(card.get("grading_cost") or 0)
     raw_value = float(card.get("market_price") or 0)
     prices = {
         "8 / 8.5": float(card.get("graded_8_price") or 0),

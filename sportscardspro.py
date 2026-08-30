@@ -127,6 +127,16 @@ def build_card_search_query(*parts: Any) -> str:
     return " ".join(str(part).strip() for part in parts if str(part or "").strip())
 
 
+def extract_card_number(product_name: Any) -> str:
+    """Extract hash-style or trading-card codes from the end of a product name."""
+    name = str(product_name or "").strip()
+    hash_match = re.search(r"#([^\s\]]+)\s*$", name)
+    if hash_match:
+        return hash_match.group(1)
+    code_match = re.search(r"\b([A-Z]{1,5}(?:\d{2})?-\d{3})\s*$", name, re.IGNORECASE)
+    return code_match.group(1).upper() if code_match else ""
+
+
 def _identity_text(value: Any) -> str:
     text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
@@ -136,11 +146,13 @@ def _product_identity(name: Any, set_name: Any, card_number: Any = "") -> tuple[
     product_name = str(name or "").strip()
     variants = re.findall(r"\[([^]]+)]", product_name)
     variant = variants[-1] if variants else ""
-    number_match = re.search(r"#([^\s]+)\s*$", product_name)
-    number = str(card_number or (number_match.group(1) if number_match else "")).split("/", 1)[0]
+    number = str(card_number or extract_card_number(product_name)).split("/", 1)[0]
     if number.isdigit():
         number = str(int(number))
-    base_name = re.sub(r"\s+#([^\s]+)\s*$", "", product_name)
+    base_name = re.sub(
+        r"\s+(?:#[^\s]+|[A-Z]{1,5}(?:\d{2})?-\d{3})\s*$", "", product_name,
+        flags=re.IGNORECASE,
+    )
     base_name = re.sub(r"\s*\[[^]]+]", "", base_name).strip()
     return (
         _identity_text(set_name), _identity_text(base_name),

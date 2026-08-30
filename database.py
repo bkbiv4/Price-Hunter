@@ -159,6 +159,7 @@ def initialize() -> None:
                 grading_status TEXT NOT NULL DEFAULT '',
                 quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity >= 0),
                 cost REAL NOT NULL DEFAULT 0,
+                grading_cost REAL NOT NULL DEFAULT 0,
                 allocated_cost_total REAL,
                 market_price REAL,
                 graded_8_price REAL,
@@ -199,6 +200,8 @@ def initialize() -> None:
             db.execute("ALTER TABLE cards ADD COLUMN grade_prices_refreshed_at TEXT")
         if "allocated_cost_total" not in existing:
             db.execute("ALTER TABLE cards ADD COLUMN allocated_cost_total REAL")
+        if "grading_cost" not in existing:
+            db.execute("ALTER TABLE cards ADD COLUMN grading_cost REAL NOT NULL DEFAULT 0")
         if "ebay_offer_id" not in existing:
             db.execute("ALTER TABLE cards ADD COLUMN ebay_offer_id TEXT NOT NULL DEFAULT ''")
         if "image_urls" not in existing:
@@ -274,6 +277,7 @@ def initialize() -> None:
                 base_unit_cost REAL NOT NULL,
                 higher_cost_units INTEGER NOT NULL DEFAULT 0,
                 allocated_total REAL NOT NULL,
+                allocation_group TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(purchase_id, card_id)
             );
@@ -339,6 +343,8 @@ def initialize() -> None:
                 quantity INTEGER NOT NULL DEFAULT 1,
                 unit_price REAL NOT NULL DEFAULT 0,
                 unit_cost REAL NOT NULL DEFAULT 0,
+                acquisition_unit_cost REAL NOT NULL DEFAULT 0,
+                grading_unit_cost REAL NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -373,6 +379,45 @@ def initialize() -> None:
         db.execute(
             "UPDATE sales SET gross_net_amount = net_amount WHERE gross_net_amount IS NULL"
         )
+        allocation_existing = {
+            row[1] for row in db.execute("PRAGMA table_info(purchase_allocations)").fetchall()
+        }
+        if "allocation_group" not in allocation_existing:
+            db.execute(
+                "ALTER TABLE purchase_allocations ADD COLUMN allocation_group TEXT NOT NULL DEFAULT ''"
+            )
+        sale_item_existing = {
+            row[1] for row in db.execute("PRAGMA table_info(sale_items)").fetchall()
+        }
+        added_cost_components = "acquisition_unit_cost" not in sale_item_existing
+        if added_cost_components:
+            db.execute(
+                "ALTER TABLE sale_items ADD COLUMN acquisition_unit_cost REAL NOT NULL DEFAULT 0"
+            )
+            db.execute(
+                "ALTER TABLE sale_items ADD COLUMN grading_unit_cost REAL NOT NULL DEFAULT 0"
+            )
+            db.execute(
+                """
+                UPDATE sale_items
+                SET grading_unit_cost = COALESCE((
+                        SELECT grading_cost FROM cards WHERE cards.id = sale_items.card_id
+                    ), 0),
+                    acquisition_unit_cost = CASE
+                        WHEN unit_cost >= COALESCE((
+                            SELECT grading_cost FROM cards WHERE cards.id = sale_items.card_id
+                        ), 0)
+                        THEN unit_cost - COALESCE((
+                            SELECT grading_cost FROM cards WHERE cards.id = sale_items.card_id
+                        ), 0)
+                        ELSE unit_cost
+                    END
+                """
+            )
+            db.execute(
+                "UPDATE sale_items SET unit_cost = acquisition_unit_cost + grading_unit_cost"
+            )
+            _recalculate_all_sale_totals(db)
 
 
 def _record_event(
@@ -410,6 +455,45 @@ def _record_event(
     )
 
 
+def _recalculate_sale_totals(db: sqlite3.Connection, sale_ids: list[int]) -> None:
+    for sale_id in sorted(set(sale_ids)):
+        sale = db.execute("SELECT net_amount FROM sales WHERE id = ?", (sale_id,)).fetchone()
+        if not sale:
+            continue
+        cogs = round(float(db.execute(
+            "SELECT COALESCE(SUM(unit_cost * quantity), 0) FROM sale_items WHERE sale_id = ?",
+            (sale_id,),
+        ).fetchone()[0]), 2)
+        db.execute(
+            "UPDATE sales SET cost_of_goods = ?, profit = ? WHERE id = ?",
+            (cogs, round(float(sale["net_amount"] or 0) - cogs, 2), sale_id),
+        )
+
+
+def _recalculate_all_sale_totals(db: sqlite3.Connection) -> None:
+    _recalculate_sale_totals(
+        db, [int(row[0]) for row in db.execute("SELECT id FROM sales").fetchall()]
+    )
+
+
+def _refresh_card_grading_cost_in_sales(db: sqlite3.Connection, card_id: int) -> None:
+    card = db.execute("SELECT grading_cost FROM cards WHERE id = ?", (card_id,)).fetchone()
+    if not card:
+        return
+    sale_ids = [int(row[0]) for row in db.execute(
+        "SELECT DISTINCT sale_id FROM sale_items WHERE card_id = ?", (card_id,)
+    ).fetchall()]
+    grading_cost = float(card["grading_cost"] or 0)
+    db.execute(
+        """
+        UPDATE sale_items SET grading_unit_cost = ?,
+            unit_cost = acquisition_unit_cost + ? WHERE card_id = ?
+        """,
+        (grading_cost, grading_cost, card_id),
+    )
+    _recalculate_sale_totals(db, sale_ids)
+
+
 def add_card(values: dict[str, Any]) -> int:
     columns = ", ".join(values)
     placeholders = ", ".join("?" for _ in values)
@@ -443,6 +527,64 @@ def add_cards(rows: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
+def split_card(item_id: int, split_quantity: int, split_values: dict[str, Any]) -> int:
+    """Move part of an inventory row into a new row while preserving the remainder."""
+    with connection() as db:
+        card = db.execute("SELECT * FROM cards WHERE id = ?", (item_id,)).fetchone()
+        if not card:
+            raise ValueError("Inventory card was not found.")
+        original_quantity = int(card["quantity"])
+        split_quantity = int(split_quantity)
+        if split_quantity < 1 or split_quantity >= original_quantity:
+            raise ValueError("Split quantity must leave at least one card in the original row.")
+        if db.execute(
+            "SELECT 1 FROM purchase_allocations WHERE card_id = ? LIMIT 1", (item_id,)
+        ).fetchone():
+            raise ValueError(
+                "This row has purchase allocations. Remove or revise its allocation before splitting it."
+            )
+        excluded = {"id", "sku", "created_at", "updated_at", "allocated_cost_total"}
+        values = {key: card[key] for key in card.keys() if key not in excluded}
+        values.update(split_values)
+        values["quantity"] = split_quantity
+        columns = ", ".join(values)
+        placeholders = ", ".join("?" for _ in values)
+        cursor = db.execute(
+            f"INSERT INTO cards ({columns}) VALUES ({placeholders})", tuple(values.values())
+        )
+        new_id = int(cursor.lastrowid)
+        new_sku = f"PH-{new_id:06d}"
+        db.execute("UPDATE cards SET sku = ? WHERE id = ?", (new_sku, new_id))
+        remainder = original_quantity - split_quantity
+        db.execute(
+            "UPDATE cards SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (remainder, item_id),
+        )
+        _record_event(
+            db, item_id, "Quantity split",
+            f"Moved {split_quantity} card(s) to {new_sku}; {remainder} remain",
+            -split_quantity, reference_type="inventory_split", reference_id=new_id,
+        )
+        _record_event(
+            db, new_id, "Split from inventory row",
+            f"Created from {card['sku']} with quantity {split_quantity}",
+            split_quantity, reference_type="inventory_split", reference_id=item_id,
+        )
+        return new_id
+
+
+def clone_card(item_id: int, quantity: int, overrides: dict[str, Any] | None = None) -> int:
+    """Create another inventory row from an existing card's saved details."""
+    card = get_card(item_id)
+    if not card:
+        raise ValueError("Inventory card was not found.")
+    excluded = {"id", "sku", "created_at", "updated_at", "allocated_cost_total"}
+    values = {key: value for key, value in card.items() if key not in excluded}
+    values.update(overrides or {})
+    values["quantity"] = int(quantity)
+    return add_card(values)
+
+
 def all_cards() -> list[dict[str, Any]]:
     with connection() as db:
         rows = db.execute("SELECT * FROM cards ORDER BY id DESC").fetchall()
@@ -463,6 +605,8 @@ def update_card(item_id: int, values: dict[str, Any]) -> None:
             f"UPDATE cards SET {assignments}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (*values.values(), item_id),
         )
+        if "grading_cost" in values:
+            _refresh_card_grading_cost_in_sales(db, item_id)
         if before:
             changes = [
                 f"{column}: {before[column]} → {value}"
@@ -491,6 +635,9 @@ def update_cards(item_ids: list[int], values: dict[str, Any]) -> int:
             """,
             (*values.values(), *item_ids),
         )
+        if "grading_cost" in values:
+            for item_id in item_ids:
+                _refresh_card_grading_cost_in_sales(db, int(item_id))
         for before in before_rows:
             changes = [
                 f"{column}: {before[column]} → {value}"
@@ -749,7 +896,9 @@ def link_sale_to_card(sale_id: int, card_id: int, reduce_inventory: bool = True)
         if not sale or not card:
             raise ValueError("Sale or inventory card was not found.")
         sold_quantity = max(1, int(sale["quantity"]))
-        unit_cost = float(card["cost"] or 0)
+        acquisition_cost = float(card["cost"] or 0)
+        grading_cost = float(card["grading_cost"] or 0)
+        unit_cost = acquisition_cost + grading_cost
         cost_of_goods = round(unit_cost * sold_quantity, 2)
         profit = round(float(sale["net_amount"] or 0) - cost_of_goods, 2)
         db.execute(
@@ -759,9 +908,10 @@ def link_sale_to_card(sale_id: int, card_id: int, reduce_inventory: bool = True)
         db.execute(
             """
             INSERT INTO sale_items (
-                sale_id, card_id, card_sku, card_name, quantity, unit_price, unit_cost
+                sale_id, card_id, card_sku, card_name, quantity, unit_price, unit_cost,
+                acquisition_unit_cost, grading_unit_cost
             )
-            SELECT ?, ?, ?, ?, ?, ?, ?
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE NOT EXISTS (
                 SELECT 1 FROM sale_items WHERE sale_id = ? AND card_id = ?
             )
@@ -769,6 +919,7 @@ def link_sale_to_card(sale_id: int, card_id: int, reduce_inventory: bool = True)
             (
                 sale_id, card_id, card["sku"], card["card_name"], sold_quantity,
                 round(float(sale["item_subtotal"] or 0) / sold_quantity, 2), unit_cost,
+                acquisition_cost, grading_cost,
                 sale_id, card_id,
             ),
         )
@@ -844,7 +995,8 @@ def create_manual_sale(card_id: int, values: dict[str, Any]) -> int:
         promoted_fees = round(float(values.get("promoted_listing_fees", 0)), 2)
         shipping_label = round(float(values.get("shipping_label_cost", 0)), 2)
         net_amount = round(item_subtotal + shipping_charged - fees - promoted_fees - shipping_label, 2)
-        cost_of_goods = round(float(card["cost"] or 0) * sold_quantity, 2)
+        unit_cost = float(card["cost"] or 0) + float(card["grading_cost"] or 0)
+        cost_of_goods = round(unit_cost * sold_quantity, 2)
         profit = round(net_amount - cost_of_goods, 2)
         sale_values = {
             **values,
@@ -864,12 +1016,14 @@ def create_manual_sale(card_id: int, values: dict[str, Any]) -> int:
         db.execute(
             """
             INSERT INTO sale_items (
-                sale_id, card_id, card_sku, card_name, quantity, unit_price, unit_cost
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                sale_id, card_id, card_sku, card_name, quantity, unit_price, unit_cost,
+                acquisition_unit_cost, grading_unit_cost
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sale_id, card_id, card["sku"], card["card_name"], sold_quantity,
-                round(item_subtotal / sold_quantity, 2), float(card["cost"] or 0),
+                round(item_subtotal / sold_quantity, 2), unit_cost,
+                float(card["cost"] or 0), float(card["grading_cost"] or 0),
             ),
         )
         remaining = int(card["quantity"]) - sold_quantity
@@ -907,7 +1061,9 @@ def create_multi_card_sale(values: dict[str, Any], items: list[dict[str, Any]]) 
             prepared.append((card, quantity, unit_price))
             total_quantity += quantity
             item_subtotal += unit_price * quantity
-            cost_of_goods += float(card["cost"] or 0) * quantity
+            cost_of_goods += (
+                float(card["cost"] or 0) + float(card["grading_cost"] or 0)
+            ) * quantity
         shipping_charged = float(values.get("shipping_charged", 0) or 0)
         fees = float(values.get("fees", 0) or 0)
         promoted_fees = float(values.get("promoted_listing_fees", 0) or 0)
@@ -937,12 +1093,15 @@ def create_multi_card_sale(values: dict[str, Any], items: list[dict[str, Any]]) 
             db.execute(
                 """
                 INSERT INTO sale_items (
-                    sale_id, card_id, card_sku, card_name, quantity, unit_price, unit_cost
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    sale_id, card_id, card_sku, card_name, quantity, unit_price, unit_cost,
+                    acquisition_unit_cost, grading_unit_cost
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sale_id, card["id"], card["sku"], card["card_name"], quantity,
-                    unit_price, float(card["cost"] or 0),
+                    unit_price,
+                    float(card["cost"] or 0) + float(card["grading_cost"] or 0),
+                    float(card["cost"] or 0), float(card["grading_cost"] or 0),
                 ),
             )
             remaining = int(card["quantity"]) - quantity
@@ -1113,7 +1272,7 @@ def grading_items(submission_id: int) -> list[dict[str, Any]]:
     with connection() as db:
         rows = db.execute(
             """
-            SELECT gi.*, c.sku, c.card_name, c.set_name, c.cost,
+            SELECT gi.*, c.sku, c.card_name, c.set_name, c.cost, c.grading_cost,
                    c.graded_8_price, c.graded_9_price, c.psa_10_price
             FROM grading_items gi LEFT JOIN cards c ON c.id = gi.card_id
             WHERE gi.submission_id = ? ORDER BY gi.id
@@ -1168,7 +1327,7 @@ def update_grading_submission(
                 updates: dict[str, Any] = {
                     "grading_status": status,
                     "status": "Ready",
-                    "cost": round(float(card["cost"] or 0) + cost_increase, 2),
+                    "grading_cost": round(float(card["grading_cost"] or 0) + cost_increase, 2),
                 }
                 if status == "Returned" and grade:
                     updates.update({
@@ -1246,49 +1405,126 @@ def allocated_card_ids() -> set[int]:
     return {int(row[0]) for row in rows}
 
 
-def allocate_purchase(purchase_id: int, allocations: list[dict[str, Any]]) -> None:
-    """Replace a purchase allocation and update inventory cost fields atomically."""
+def _allocated_quantities_from_rows(
+    rows: list[sqlite3.Row], exclude_purchase_ids: list[int] | None = None,
+) -> dict[int, int]:
+    excluded = set(exclude_purchase_ids or [])
+    excluded_groups = {
+        row["allocation_group"] for row in rows
+        if int(row["purchase_id"]) in excluded and row["allocation_group"]
+    }
+    grouped: dict[tuple[int, str], int] = {}
+    for row in rows:
+        if int(row["purchase_id"]) in excluded or row["allocation_group"] in excluded_groups:
+            continue
+        group = row["allocation_group"] or f"purchase:{row['purchase_id']}"
+        key = (int(row["card_id"]), group)
+        grouped[key] = max(grouped.get(key, 0), int(row["quantity"]))
+    result: dict[int, int] = {}
+    for (card_id, _), quantity in grouped.items():
+        result[card_id] = result.get(card_id, 0) + quantity
+    return result
+
+
+def allocated_card_quantities(exclude_purchase_ids: list[int] | None = None) -> dict[int, int]:
+    """Return physical quantities reserved by purchase allocations."""
     with connection() as db:
-        previous = db.execute(
-            "SELECT card_id FROM purchase_allocations WHERE purchase_id = ?",
-            (purchase_id,),
-        ).fetchall()
-        for row in previous:
-            db.execute(
-                "UPDATE cards SET allocated_cost_total = NULL WHERE id = ?",
-                (row["card_id"],),
-            )
-        db.execute("DELETE FROM purchase_allocations WHERE purchase_id = ?", (purchase_id,))
+        rows = db.execute("SELECT * FROM purchase_allocations").fetchall()
+    return _allocated_quantities_from_rows(rows, exclude_purchase_ids)
+
+
+def allocate_purchase(purchase_id: int, allocations: list[dict[str, Any]]) -> None:
+    allocate_purchases([purchase_id], allocations)
+
+
+def allocate_purchases(purchase_ids: list[int], allocations: list[dict[str, Any]]) -> None:
+    """Replace a purchase allocation and update inventory cost fields atomically."""
+    purchase_ids = sorted({int(value) for value in purchase_ids})
+    if not purchase_ids:
+        raise ValueError("Choose at least one purchase.")
+    if not allocations:
+        raise ValueError("Choose at least one inventory card.")
+    with connection() as db:
+        requested_by_card: dict[int, int] = {}
         for allocation in allocations:
+            card_id = int(allocation["card_id"])
             quantity = int(allocation["quantity"])
             if quantity <= 0:
                 raise ValueError("Allocation quantity must be greater than zero.")
-            db.execute(
+            requested_by_card[card_id] = requested_by_card.get(card_id, 0) + quantity
+        for card_id, requested_quantity in requested_by_card.items():
+            card = db.execute("SELECT quantity FROM cards WHERE id = ?", (card_id,)).fetchone()
+            allocation_rows = db.execute("SELECT * FROM purchase_allocations").fetchall()
+            allocated_elsewhere = _allocated_quantities_from_rows(
+                allocation_rows, purchase_ids
+            ).get(card_id, 0)
+            if not card or requested_quantity + allocated_elsewhere > int(card["quantity"]):
+                raise ValueError("An allocation exceeds the card's unallocated physical quantity.")
+        marks = ", ".join("?" for _ in purchase_ids)
+        previous = db.execute(
+            f"SELECT card_id FROM purchase_allocations WHERE purchase_id IN ({marks})",
+            tuple(purchase_ids),
+        ).fetchall()
+        affected_ids = {int(row["card_id"]) for row in previous}
+        db.execute(
+            f"DELETE FROM purchase_allocations WHERE purchase_id IN ({marks})", tuple(purchase_ids)
+        )
+        purchases = db.execute(
+            f"SELECT id, total_cost FROM purchases WHERE id IN ({marks})", tuple(purchase_ids)
+        ).fetchall()
+        if len(purchases) != len(purchase_ids):
+            raise ValueError("A selected purchase was not found.")
+        group = "purchases:" + ",".join(str(value) for value in purchase_ids)
+        total_units = sum(int(row["quantity"]) for row in allocations)
+        for purchase in purchases:
+            total_cents = int(round(float(purchase["total_cost"] or 0) * 100))
+            base_cents, remainder = divmod(total_cents, total_units)
+            for allocation in allocations:
+                quantity = int(allocation["quantity"])
+                card_id = int(allocation["card_id"])
+                higher_units = min(quantity, remainder)
+                remainder -= higher_units
+                allocated_total = (base_cents * quantity + higher_units) / 100
+                db.execute(
+                    """
+                    INSERT INTO purchase_allocations (
+                        purchase_id, card_id, quantity, base_unit_cost,
+                        higher_cost_units, allocated_total, allocation_group
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (purchase["id"], card_id, quantity, base_cents / 100,
+                     higher_units, allocated_total, group),
+                )
+                affected_ids.add(card_id)
+        for card_id in affected_ids:
+            cost_total = db.execute(
                 """
-                INSERT INTO purchase_allocations (
-                    purchase_id, card_id, quantity, base_unit_cost,
-                    higher_cost_units, allocated_total
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                SELECT COALESCE(SUM(allocated_total), 0)
+                FROM purchase_allocations WHERE card_id = ?
                 """,
-                (
-                    purchase_id,
-                    allocation["card_id"],
-                    quantity,
-                    allocation["base_unit_cost"],
-                    allocation["higher_cost_units"],
-                    allocation["allocated_total"],
-                ),
-            )
-            average_cost = round(allocation["allocated_total"] / quantity, 2)
+                (card_id,),
+            ).fetchone()[0]
+            allocation_rows = db.execute("SELECT * FROM purchase_allocations").fetchall()
+            allocated_quantity = _allocated_quantities_from_rows(allocation_rows).get(card_id, 0)
+            allocated_total = float(cost_total)
+            if allocated_quantity == 0:
+                db.execute(
+                    "UPDATE cards SET allocated_cost_total = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (card_id,),
+                )
+                continue
+            average_cost = round(allocated_total / allocated_quantity, 2)
             db.execute(
                 """
                 UPDATE cards
                 SET cost = ?, allocated_cost_total = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (average_cost, allocation["allocated_total"], allocation["card_id"]),
+                (average_cost, round(allocated_total, 2), card_id),
             )
-        db.execute("UPDATE purchases SET status = 'Allocated' WHERE id = ?", (purchase_id,))
+        db.execute(
+            f"UPDATE purchases SET status = 'Allocated' WHERE id IN ({marks})", tuple(purchase_ids)
+        )
 
 
 def purchase_allocations(purchase_id: int | None = None) -> list[dict[str, Any]]:

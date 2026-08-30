@@ -35,6 +35,7 @@ from sportscardspro import (
     SportsCardsProError,
     available_prices,
     build_card_search_query,
+    extract_card_number,
     inventory_grade_prices,
     matches_parallel,
     matches_terms,
@@ -62,7 +63,8 @@ INVENTORY_COLUMN_CONFIG = {
     "grade": st.column_config.TextColumn("Grade"),
     "grading_status": st.column_config.TextColumn("Grading Status"),
     "quantity": st.column_config.NumberColumn("Qty", format="%d"),
-    "cost": st.column_config.NumberColumn("Unit Cost", format="$%.2f"),
+    "cost": st.column_config.NumberColumn("Acquisition Cost", format="$%.2f"),
+    "grading_cost": st.column_config.NumberColumn("Grading Cost", format="$%.2f"),
     "allocated_cost_total": st.column_config.NumberColumn("Allocated Lot Cost", format="$%.2f"),
     "market_price": st.column_config.NumberColumn("Market Value", format="$%.2f"),
     "graded_8_price": st.column_config.NumberColumn("Graded 8 / 8.5", format="$%.2f"),
@@ -108,12 +110,15 @@ def with_inventory_totals(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame
     valued = frame.copy()
-    for column in ["quantity", "cost", "allocated_cost_total", "market_price", "graded_9_price", "psa_10_price"]:
+    for column in ["quantity", "cost", "grading_cost", "allocated_cost_total", "market_price", "graded_9_price", "psa_10_price"]:
         valued[column] = pd.to_numeric(valued[column], errors="coerce").fillna(0)
     valued["cost_total"] = valued["allocated_cost_total"]
     valued.loc[valued["cost_total"] == 0, "cost_total"] = (
         valued["cost"] * valued["quantity"]
     )
+    valued["acquisition_cost_total"] = valued["cost_total"]
+    valued["grading_cost_total"] = valued["grading_cost"] * valued["quantity"]
+    valued["cost_total"] += valued["grading_cost_total"]
     valued["market_total"] = valued["market_price"] * valued["quantity"]
     valued["grade_9_total"] = valued["graded_9_price"] * valued["quantity"]
     valued["psa_10_total"] = valued["psa_10_price"] * valued["quantity"]
@@ -167,7 +172,9 @@ def prepared_listing_card(card: dict, markup: float = 30.0) -> dict:
             card.get("certification_number", ""),
         ),
         "list_price": card.get("list_price") or suggested_price(
-            card.get("market_price"), float(card.get("cost") or 0), markup
+            card.get("market_price"),
+            float(card.get("cost") or 0) + float(card.get("grading_cost") or 0),
+            markup,
         ),
     }
     prepared["readiness_issues"] = listing_readiness_issues(prepared)
@@ -751,7 +758,9 @@ with add_tab:
         with left:
             card_name = st.text_input("Card/player name", value=product.get("product-name", ""))
             set_name = st.text_input("Set", value=product.get("console-name", ""))
-            card_number = st.text_input("Card number")
+            card_number = st.text_input(
+                "Card number", value=extract_card_number(product.get("product-name", ""))
+            )
             condition = st.selectbox("Card type", ["Raw / Ungraded", "Graded"])
             grader = st.selectbox("Grading company", ["", "PSA", "BGS", "SGC", "CGC", "CSG", "TAG", "Other"])
             grade = st.text_input("Numeric grade", placeholder="10")
@@ -759,6 +768,10 @@ with add_tab:
         with right:
             quantity = st.number_input("Quantity", min_value=1, value=1, step=1)
             cost = st.number_input("Your cost", min_value=0.0, value=0.0, step=1.0, format="%.2f")
+            grading_cost = st.number_input(
+                "Grading cost per card", min_value=0.0, value=0.0, step=1.0, format="%.2f",
+                help="Tracked separately from acquisition cost and purchase allocations.",
+            )
             guide_prices = available_prices(product)
             guide_labels = list(guide_prices) or ["No API price available"]
             preferred = "Raw / Ungraded" if condition == "Raw / Ungraded" else next(
@@ -800,6 +813,7 @@ with add_tab:
                     "certification_number": certification_number.strip(),
                     "quantity": int(quantity),
                     "cost": float(cost),
+                    "grading_cost": float(grading_cost),
                     "market_price": float(market_price),
                     **inventory_grade_prices(product),
                     "grade_prices_refreshed": 1 if product else 0,
@@ -1033,10 +1047,13 @@ with inventory_tab:
             filtered_frame = filtered_frame[filtered_frame["grade_prices_refreshed"] == 1]
         elif price_coverage_filter == "Not fetched":
             filtered_frame = filtered_frame[filtered_frame["grade_prices_refreshed"] == 0]
-        row_cost_totals = filtered_frame["allocated_cost_total"].fillna(
+        row_acquisition_totals = filtered_frame["allocated_cost_total"].fillna(
             filtered_frame["cost"] * filtered_frame["quantity"]
         )
-        total_cost = row_cost_totals.sum()
+        row_grading_totals = filtered_frame["grading_cost"].fillna(0) * filtered_frame["quantity"]
+        total_acquisition_cost = row_acquisition_totals.sum()
+        total_grading_cost = row_grading_totals.sum()
+        total_cost = total_acquisition_cost + total_grading_cost
         total_market = (filtered_frame["market_price"].fillna(0) * filtered_frame["quantity"]).sum()
         total_grade_9 = (filtered_frame["graded_9_price"].fillna(0) * filtered_frame["quantity"]).sum()
         total_psa_10 = (filtered_frame["psa_10_price"].fillna(0) * filtered_frame["quantity"]).sum()
@@ -1051,6 +1068,7 @@ with inventory_tab:
         refresh_dates = frame["grade_prices_refreshed_at"].dropna()
         last_refreshed = refresh_dates.max() if not refresh_dates.empty else "Never"
         st.caption(
+            f"Acquisition cost: ${total_acquisition_cost:,.2f}; grading cost: ${total_grading_cost:,.2f}. "
             f"Grading-price coverage: {refreshed_count:,} of {len(frame):,} cards ({coverage:.1%}). "
             f"Last completed API refresh: {last_refreshed}."
         )
@@ -1061,7 +1079,7 @@ with inventory_tab:
         )
         display_columns = [
             "sku", "card_name", "set_name", "card_number", "condition", "grader",
-            "grade", "grading_status", "quantity", "cost", "allocated_cost_total",
+            "grade", "grading_status", "quantity", "cost", "grading_cost", "allocated_cost_total",
             "market_price", "graded_8_price", "graded_9_price", "psa_10_price",
             "grade_prices_refreshed_at", "list_price", "status", "storage_location",
             "similar_rows",
@@ -1157,6 +1175,12 @@ with inventory_tab:
                             "Cost per card", min_value=0.0, value=float(edit_card["cost"]), format="%.2f",
                             key=f"edit_cost_{edit_card['id']}",
                         )
+                        edit_grading_cost = st.number_input(
+                            "Grading cost per card", min_value=0.0,
+                            value=float(edit_card.get("grading_cost") or 0), format="%.2f",
+                            key=f"edit_grading_cost_{edit_card['id']}",
+                            help="This remains separate from purchase-allocated acquisition cost.",
+                        )
                         edit_status = st.selectbox(
                             "Status", ["Draft", "Ready", "Listed", "Grading", "Sold"],
                             index=["Draft", "Ready", "Listed", "Grading", "Sold"].index(edit_card["status"])
@@ -1168,8 +1192,21 @@ with inventory_tab:
                             value=edit_card.get("image_urls", ""),
                             key=f"edit_images_{edit_card['id']}",
                         )
+                    split_graded_copy = False
+                    if (
+                        edit_card.get("condition") != "Graded"
+                        and edit_condition == "Graded"
+                        and 0 < int(edit_quantity) < int(edit_card["quantity"])
+                    ):
+                        split_graded_copy = st.checkbox(
+                            f"Keep the remaining {int(edit_card['quantity']) - int(edit_quantity)} "
+                            "card(s) as an ungraded inventory row",
+                            value=True,
+                            key=f"split_graded_copy_{edit_card['id']}",
+                            help="Creates a separate graded row instead of overwriting the ungraded copies.",
+                        )
                     if st.button("Save selected card"):
-                        database.update_card(int(edit_card["id"]), {
+                        edit_values = {
                             "card_name": edit_name.strip(),
                             "set_name": edit_set.strip(),
                             "card_number": edit_number.strip(),
@@ -1180,10 +1217,24 @@ with inventory_tab:
                             "storage_location": edit_location.strip(),
                             "quantity": int(edit_quantity),
                             "cost": float(edit_cost),
+                            "grading_cost": float(edit_grading_cost),
                             "status": edit_status,
                             "image_urls": edit_images.strip(),
-                        })
-                        st.rerun()
+                        }
+                        try:
+                            if split_graded_copy:
+                                new_id = database.split_card(
+                                    int(edit_card["id"]), int(edit_quantity), edit_values
+                                )
+                                st.success(
+                                    f"Created graded inventory row PH-{new_id:06d}; "
+                                    "ungraded remainder preserved."
+                                )
+                            else:
+                                database.update_card(int(edit_card["id"]), edit_values)
+                            st.rerun()
+                        except ValueError as exc:
+                            st.error(str(exc))
 
                 st.markdown("#### Bulk changes")
                 bulk_left, bulk_right = st.columns(2)
@@ -1193,6 +1244,11 @@ with inventory_tab:
                         bulk_values["storage_location"] = st.text_input("New storage location").strip()
                     if st.checkbox("Change set name"):
                         bulk_values["set_name"] = st.text_input("New set name").strip()
+                    if st.checkbox("Change acquisition cost"):
+                        bulk_values["cost"] = float(st.number_input(
+                            "New acquisition cost per card", min_value=0.0, value=0.0,
+                            step=1.0, format="%.2f", key="bulk_cost",
+                        ))
                 with bulk_right:
                     if st.checkbox("Change status"):
                         bulk_values["status"] = st.selectbox(
@@ -1201,6 +1257,12 @@ with inventory_tab:
                     if st.checkbox("Change quantity"):
                         bulk_values["quantity"] = int(st.number_input(
                             "New quantity", min_value=0, value=1, step=1, key="bulk_quantity"
+                        ))
+                    if st.checkbox("Change grading cost"):
+                        bulk_values["grading_cost"] = float(st.number_input(
+                            "New grading cost per card", min_value=0.0, value=0.0,
+                            step=1.0, format="%.2f", key="bulk_grading_cost",
+                            help="This does not alter purchase-allocated acquisition cost.",
                         ))
                 if st.button("Apply bulk changes", disabled=not bulk_values):
                     database.update_cards(selected_ids, bulk_values)
@@ -1275,7 +1337,10 @@ with inventory_tab:
                     )
                     sale_notes = st.text_area("Sale notes", key=f"sold_notes_{sold_card['id']}")
                     estimated_net = sale_price + shipping_charged - fees - promoted_fees - label_cost
-                    estimated_cogs = float(sold_card["cost"] or 0) * sale_quantity
+                    estimated_cogs = (
+                        float(sold_card["cost"] or 0)
+                        + float(sold_card.get("grading_cost") or 0)
+                    ) * sale_quantity
                     st.caption(
                         f"Estimated net: ${estimated_net:,.2f} · "
                         f"COGS: ${estimated_cogs:,.2f} · "
@@ -1545,7 +1610,10 @@ with listing_tab:
                         queued_card["grader"], queued_card["certification_number"],
                     ),
                     "list_price": queued_card["list_price"] or suggested_price(
-                        queued_card["market_price"], queued_card["cost"], queue_markup
+                        queued_card["market_price"],
+                        float(queued_card["cost"] or 0)
+                        + float(queued_card.get("grading_cost") or 0),
+                        queue_markup,
                     ),
                     "status": "Draft",
                 })
@@ -1619,7 +1687,11 @@ with listing_tab:
             card["card_name"], card["set_name"], card["condition"], card["grade"], card["notes"], card["sku"],
             card["grader"], card["certification_number"]
         )
-        default_price = card["list_price"] or suggested_price(card["market_price"], card["cost"], markup)
+        default_price = card["list_price"] or suggested_price(
+            card["market_price"],
+            float(card["cost"] or 0) + float(card.get("grading_cost") or 0),
+            markup,
+        )
         with st.form("listing_draft"):
             title = st.text_input("eBay title", value=default_title, max_chars=80)
             st.caption(f"{len(title)}/80 characters")
