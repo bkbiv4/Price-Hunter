@@ -95,7 +95,10 @@ def _worker(cards: list[dict[str, Any]], token: str) -> None:
 
         try:
             if card.get("scp_id"):
-                product = client.product(card["scp_id"])
+                product = client.product(
+                    card["scp_id"],
+                    pokemon=str(card.get("set_name", "")).casefold().startswith("pokemon"),
+                )
             else:
                 query = build_card_search_query(card.get("set_name"), card.get("card_name"))
                 search = (
@@ -109,11 +112,18 @@ def _worker(cards: list[dict[str, Any]], token: str) -> None:
                 database.update_scp_id(card["id"], str(product["id"]))
             database.update_grade_prices(card["id"], inventory_grade_prices(product))
         except Exception as exc:
+            error_message = str(exc)
+            try:
+                database.record_price_lookup_failure(int(card["id"]), error_message)
+            except Exception as persistence_exc:
+                error_message = (
+                    f"{error_message} (could not save lookup failure: {persistence_exc})"
+                )
             with _lock:
                 _status.update(
                     processed=_status["processed"] + 1,
                     failed=_status["failed"] + 1,
-                    last_error=f"{card.get('sku', '')}: {exc}",
+                    last_error=f"{card.get('sku', '')}: {error_message}",
                 )
             continue
 

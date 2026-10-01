@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import datetime
 from pathlib import Path
@@ -25,10 +26,13 @@ from ebay import (
     EbayConfig,
     EbayError,
     ebay_draft_row,
+    local_image_paths,
     listing_payloads,
     listing_readiness_issues,
+    public_image_urls,
 )
 from listings import build_description, build_title, suggested_price
+from seller_search import SELLERS, inventory_search_query, seller_search_rows
 from scp_import import REQUIRED_COLUMNS, collection_row_to_card, collection_type, import_identity
 from sportscardspro import (
     SportsCardsProClient,
@@ -49,8 +53,31 @@ from tcgcollector_import import (
 
 
 ENV_PATH = Path(__file__).with_name(".env")
+LISTING_IMAGE_DIR = Path(__file__).with_name("data") / "listing_images"
 load_dotenv(ENV_PATH)
 database.initialize()
+
+
+def save_listing_images(sku: str, uploads: list) -> list[Path]:
+    """Persist Streamlit uploads under a stable, SKU-specific local folder."""
+    if not uploads:
+        return []
+    folder = LISTING_IMAGE_DIR / "".join(character for character in sku if character.isalnum() or character in "-_")
+    folder.mkdir(parents=True, exist_ok=True)
+    saved = []
+    for upload in uploads:
+        content = upload.getvalue()
+        if len(content) > 12 * 1024 * 1024:
+            raise ValueError(f"{upload.name} is larger than eBay's 12 MB image limit.")
+        suffix = Path(upload.name).suffix.casefold()
+        if suffix not in {".avif", ".bmp", ".gif", ".heic", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}:
+            raise ValueError(f"{upload.name} is not a supported image type.")
+        digest = hashlib.sha256(content).hexdigest()[:16]
+        destination = (folder / f"{digest}{suffix}").resolve()
+        if not destination.exists():
+            destination.write_bytes(content)
+        saved.append(destination)
+    return saved
 
 
 INVENTORY_COLUMN_CONFIG = {
@@ -70,6 +97,15 @@ INVENTORY_COLUMN_CONFIG = {
     "graded_8_price": st.column_config.NumberColumn("Graded 8 / 8.5", format="$%.2f"),
     "graded_9_price": st.column_config.NumberColumn("Graded 9", format="$%.2f"),
     "psa_10_price": st.column_config.NumberColumn("PSA 10 Value", format="$%.2f"),
+    "bgs_10_price": st.column_config.NumberColumn("BGS 10", format="$%.2f"),
+    "bgs_black_10_price": st.column_config.NumberColumn("BGS Black Label 10", format="$%.2f"),
+    "cgc_10_price": st.column_config.NumberColumn("CGC 10", format="$%.2f"),
+    "cgc_pristine_10_price": st.column_config.NumberColumn("CGC Pristine 10", format="$%.2f"),
+    "sgc_10_price": st.column_config.NumberColumn("SGC 10", format="$%.2f"),
+    "tag_10_price": st.column_config.NumberColumn("TAG 10", format="$%.2f"),
+    "ace_10_price": st.column_config.NumberColumn("ACE 10", format="$%.2f"),
+    "bgs_black_10_price_source": st.column_config.TextColumn("Black Label Source"),
+    "cgc_pristine_10_price_source": st.column_config.TextColumn("CGC Pristine Source"),
     "grade_prices_refreshed_at": st.column_config.DatetimeColumn("Prices Refreshed"),
     "list_price": st.column_config.NumberColumn("List Price", format="$%.2f"),
     "status": st.column_config.TextColumn("Status"),
@@ -246,6 +282,22 @@ def data_quality_sections(cards: list[dict], sales: list[dict], purchases: list[
     sections["Missing market value"] = active[
         (pd.to_numeric(active["market_price"], errors="coerce").fillna(0) <= 0)
     ][["sku", "card_name", "set_name", "quantity", "market_price", "status"]]
+    lookup_status = frame.get(
+        "price_lookup_status", pd.Series("", index=frame.index, dtype="object")
+    ).fillna("")
+    failed_lookups = frame[lookup_status.eq("Failed")].copy()
+    lookup_columns = [
+        "sku", "card_name", "set_name", "card_number", "condition", "quantity",
+        "scp_id", "price_lookup_attempted_at", "price_lookup_error",
+    ]
+    for column in lookup_columns:
+        if column not in failed_lookups:
+            failed_lookups[column] = ""
+    if not failed_lookups.empty:
+        failed_lookups = failed_lookups.sort_values(
+            "price_lookup_attempted_at", ascending=False, na_position="last"
+        )
+    sections["Failed PriceCharting lookups"] = failed_lookups[lookup_columns]
     sections["Duplicate-looking cards"] = pd.DataFrame(duplicate_rows)
     sections["Sold status with quantity"] = frame[
         (frame["status"].fillna("") == "Sold")
@@ -401,6 +453,11 @@ def render_data_quality() -> None:
     st.dataframe(summary, use_container_width=True, hide_index=True)
     for name, frame in sections.items():
         with st.expander(f"{name} ({len(frame):,})", expanded=len(frame) > 0):
+            if name == "Failed PriceCharting lookups":
+                st.caption(
+                    "Shows each card's latest failed catalog or price lookup. "
+                    "A successful refresh automatically removes the card from this list."
+                )
             if frame.empty:
                 st.success("No rows found.")
                 continue
@@ -564,6 +621,7 @@ with st.sidebar:
     reports_tab,
     backup_tab,
     price_search_tab,
+    seller_search_tab,
     add_tab,
     listing_tab,
 ) = st.tabs(
@@ -581,6 +639,7 @@ with st.sidebar:
         "Reports",
         "Backup",
         "Price search",
+        "Seller search",
         "Add a card",
         "Listing studio",
     ]
@@ -699,6 +758,53 @@ with price_search_tab:
             file_name="price_hunter_search.csv",
             mime="text/csv",
         )
+
+with seller_search_tab:
+    st.subheader("Search 20 card sellers")
+    st.caption(
+        "Run one card query across major marketplaces and online stores. Results open on each "
+        "seller's site; availability, condition, shipping, and authenticity still need review."
+    )
+    seller_cards = database.all_cards()
+    card_options = {"Manual search": None}
+    card_options.update({card_display_name(card): card for card in seller_cards})
+    selected_card_label = st.selectbox("Prefill from inventory", card_options)
+    selected_search_card = card_options[selected_card_label]
+    default_seller_query = (
+        inventory_search_query(selected_search_card) if selected_search_card else ""
+    )
+    seller_query = st.text_input(
+        "Card or product search",
+        value=default_seller_query,
+        placeholder="Umbreon VMAX 215 Evolving Skies PSA 10",
+        key=f"seller_query_{selected_search_card['id'] if selected_search_card else 'manual'}",
+    )
+    focus_options = sorted({seller.focus for seller in SELLERS})
+    selected_focus = st.multiselect("Seller focus", focus_options, default=focus_options)
+    chosen_seller_names = st.multiselect(
+        "Sellers",
+        [seller.name for seller in SELLERS],
+        default=[seller.name for seller in SELLERS],
+    )
+    selected_seller_names = [
+        seller.name for seller in SELLERS
+        if seller.name in chosen_seller_names and seller.focus in selected_focus
+    ]
+    if seller_query.strip():
+        search_frame = pd.DataFrame(seller_search_rows(seller_query, selected_seller_names))
+        st.write(f"{len(search_frame)} seller searches ready for **{seller_query.strip()}**.")
+        st.dataframe(
+            search_frame,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Search": st.column_config.LinkColumn(
+                    "Open search", display_text="Search listings"
+                )
+            },
+        )
+    else:
+        st.info("Enter a card name or select an inventory card to generate seller searches.")
 
 with add_tab:
     st.subheader("Find a card")
@@ -975,7 +1081,7 @@ with inventory_tab:
             with filter_row_3[0]:
                 price_basis_label = st.selectbox(
                     "Price basis",
-                    ["Market / Raw", "Graded 8 / 8.5", "Graded 9", "PSA 10"],
+                    ["Market / Raw", "Graded 8 / 8.5", "Graded 9", "PSA 10", "BGS 10", "BGS Black Label 10", "CGC 10", "CGC Pristine 10", "SGC 10", "TAG 10", "ACE 10"],
                     key="inventory_price_basis_filter",
                 )
                 price_basis_columns = {
@@ -983,6 +1089,13 @@ with inventory_tab:
                     "Graded 8 / 8.5": "graded_8_price",
                     "Graded 9": "graded_9_price",
                     "PSA 10": "psa_10_price",
+                    "BGS 10": "bgs_10_price",
+                    "BGS Black Label 10": "bgs_black_10_price",
+                    "CGC 10": "cgc_10_price",
+                    "CGC Pristine 10": "cgc_pristine_10_price",
+                    "SGC 10": "sgc_10_price",
+                    "TAG 10": "tag_10_price",
+                    "ACE 10": "ace_10_price",
                 }
                 price_basis_column = price_basis_columns[price_basis_label]
             with filter_row_3[1]:
@@ -1057,12 +1170,42 @@ with inventory_tab:
         total_market = (filtered_frame["market_price"].fillna(0) * filtered_frame["quantity"]).sum()
         total_grade_9 = (filtered_frame["graded_9_price"].fillna(0) * filtered_frame["quantity"]).sum()
         total_psa_10 = (filtered_frame["psa_10_price"].fillna(0) * filtered_frame["quantity"]).sum()
-        c1, c2, c3, c4, c5 = st.columns(5)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Inventory items", len(filtered_frame), f"{len(filtered_frame):,} of {len(frame):,}")
         c2.metric("Total cost", f"${total_cost:,.2f}")
         c3.metric("Market estimate", f"${total_market:,.2f}", f"${total_market-total_cost:,.2f}")
         c4.metric("Grade 9 estimate", f"${total_grade_9:,.2f}", f"${total_grade_9-total_cost:,.2f}")
-        c5.metric("PSA 10 estimate", f"${total_psa_10:,.2f}", f"${total_psa_10-total_cost:,.2f}")
+
+        company_estimates = [
+            ("PSA 10", "psa_10_price"),
+            ("BGS 10", "bgs_10_price"),
+            ("BGS Black Label", "bgs_black_10_price"),
+            ("CGC 10", "cgc_10_price"),
+            ("CGC Pristine 10", "cgc_pristine_10_price"),
+            ("SGC 10", "sgc_10_price"),
+            ("TAG 10", "tag_10_price"),
+            ("ACE 10", "ace_10_price"),
+        ]
+        for estimate_offset in range(0, len(company_estimates), 4):
+            estimate_group = company_estimates[estimate_offset:estimate_offset + 4]
+            estimate_columns = st.columns(4)
+            for metric_column, (label, value_column) in zip(estimate_columns, estimate_group):
+                populated = filtered_frame[value_column].notna() & (filtered_frame[value_column] > 0)
+                covered_items = int(filtered_frame.loc[populated, "quantity"].sum())
+                estimate = (
+                    filtered_frame[value_column].fillna(0) * filtered_frame["quantity"]
+                ).sum()
+                covered_cost = (row_acquisition_totals + row_grading_totals).loc[populated].sum()
+                metric_column.metric(
+                    f"{label} estimate",
+                    f"${estimate:,.2f}" if covered_items else "No comps",
+                    f"${estimate-covered_cost:,.2f}" if covered_items else None,
+                    help=(
+                        f"Based on {covered_items:,} of {int(filtered_frame['quantity'].sum()):,} "
+                        "filtered inventory copies with this value available. The delta uses only the "
+                        "cost of covered rows; missing comps contribute $0."
+                    ),
+                )
         refreshed_count = int(frame["grade_prices_refreshed"].fillna(0).sum())
         coverage = refreshed_count / len(frame) if len(frame) else 0
         refresh_dates = frame["grade_prices_refreshed_at"].dropna()
@@ -1081,6 +1224,10 @@ with inventory_tab:
             "sku", "card_name", "set_name", "card_number", "condition", "grader",
             "grade", "grading_status", "quantity", "cost", "grading_cost", "allocated_cost_total",
             "market_price", "graded_8_price", "graded_9_price", "psa_10_price",
+            "bgs_10_price", "bgs_black_10_price", "cgc_10_price",
+            "cgc_pristine_10_price", "sgc_10_price",
+            "tag_10_price", "ace_10_price",
+            "bgs_black_10_price_source", "cgc_pristine_10_price_source",
             "grade_prices_refreshed_at", "list_price", "status", "storage_location",
             "similar_rows",
         ]
@@ -1397,7 +1544,20 @@ with inventory_tab:
                 card for card in cards
                 if not card.get("grade_prices_refreshed")
             ]
+            grader_value_columns = (
+                "psa_10_price", "bgs_10_price", "bgs_black_10_price",
+                "cgc_10_price", "cgc_pristine_10_price", "sgc_10_price",
+                "tag_10_price", "ace_10_price",
+            )
+            missing_grader_values = [
+                card for card in cards
+                if any(not card.get(column) for column in grader_value_columns)
+            ]
             st.write(f"{len(missing_cards):,} inventory cards have not had grading prices fetched yet.")
+            st.caption(
+                f"{len(missing_grader_values):,} cards are missing at least one PSA, BGS, CGC, "
+                "SGC, TAG, or ACE value. The official API may still return blanks when no comp exists."
+            )
             unresolved_cards = [card for card in missing_cards if not card.get("scp_id")]
             if unresolved_cards:
                 st.info(
@@ -1443,7 +1603,7 @@ with inventory_tab:
 
             refresh_status_panel()
             job_running = price_refresh.is_running()
-            refresh_buttons = st.columns(4)
+            refresh_buttons = st.columns(5)
 
             with refresh_buttons[0]:
                 if st.button(
@@ -1463,11 +1623,19 @@ with inventory_tab:
                     st.rerun()
 
             with refresh_buttons[2]:
+                if st.button(
+                    "Backfill missing grader values",
+                    disabled=job_running or not (token and missing_grader_values),
+                ):
+                    price_refresh.start(missing_grader_values, token)
+                    st.rerun()
+
+            with refresh_buttons[3]:
                 if st.button("Pause refresh", disabled=not job_running):
                     price_refresh.pause()
                     st.rerun()
 
-            with refresh_buttons[3]:
+            with refresh_buttons[4]:
                 if st.button("Reload inventory values"):
                     st.rerun()
 
@@ -1692,6 +1860,10 @@ with listing_tab:
             float(card["cost"] or 0) + float(card.get("grading_cost") or 0),
             markup,
         )
+        saved_local_paths = local_image_paths(card.get("local_image_paths"))
+        if saved_local_paths:
+            st.caption(f"{len(saved_local_paths)} local photo(s) saved for this card.")
+            st.image([str(path) for path in saved_local_paths], width=180)
         with st.form("listing_draft"):
             title = st.text_input("eBay title", value=default_title, max_chars=80)
             st.caption(f"{len(title)}/80 characters")
@@ -1705,17 +1877,29 @@ with listing_tab:
                 value=card.get("image_urls", ""),
                 help="eBay must be able to download these images from public HTTPS URLs.",
             )
+            uploaded_images = st.file_uploader(
+                "Add local card photos",
+                type=["avif", "bmp", "gif", "heic", "jpeg", "jpg", "png", "tif", "tiff", "webp"],
+                accept_multiple_files=True,
+                help="Add front, back, and detail photos. Save the draft before publishing.",
+            )
             if st.form_submit_button("Save listing draft"):
-                database.update_card(card["id"], {
-                    "listing_title": title.strip(),
-                    "listing_description": description.strip(),
-                    "list_price": float(list_price),
-                    "status": status,
-                    "ebay_item_id": ebay_item_id.strip(),
-                    "ebay_offer_id": ebay_offer_id.strip(),
-                    "image_urls": image_urls.strip(),
-                })
-                st.success("Listing draft saved.")
+                try:
+                    new_paths = save_listing_images(card["sku"], uploaded_images)
+                    saved_local_paths = list(dict.fromkeys([*saved_local_paths, *new_paths]))
+                    database.update_card(card["id"], {
+                        "listing_title": title.strip(),
+                        "listing_description": description.strip(),
+                        "list_price": float(list_price),
+                        "status": status,
+                        "ebay_item_id": ebay_item_id.strip(),
+                        "ebay_offer_id": ebay_offer_id.strip(),
+                        "image_urls": image_urls.strip(),
+                        "local_image_paths": "\n".join(str(path) for path in saved_local_paths),
+                    })
+                    st.success(f"Listing draft saved with {len(saved_local_paths)} local photo(s).")
+                except (OSError, ValueError) as exc:
+                    st.error(str(exc))
 
         st.markdown("#### Publish through eBay Inventory API")
         publish_card = {
@@ -1724,6 +1908,7 @@ with listing_tab:
             "listing_description": description.strip(),
             "list_price": float(list_price),
             "image_urls": image_urls.strip(),
+            "local_image_paths": "\n".join(str(path) for path in saved_local_paths),
         }
         publish_issues = listing_readiness_issues(publish_card, ebay_config)
         publish_ready = not publish_issues
@@ -1741,8 +1926,29 @@ with listing_tab:
             type="primary",
         ):
             try:
-                inventory_payload, offer_payload = listing_payloads(publish_card, ebay_config)
                 ebay_client = EbayClient(ebay_config)
+                hosted_urls = public_image_urls(publish_card.get("image_urls"))
+                local_paths = local_image_paths(publish_card.get("local_image_paths"))
+                uploaded_local_paths = {
+                    line.strip() for line in str(card.get("ebay_uploaded_local_images") or "").splitlines()
+                    if line.strip()
+                }
+                pending_local_paths = [
+                    path for path in local_paths if str(path) not in uploaded_local_paths
+                ]
+                if pending_local_paths:
+                    with st.spinner(f"Uploading {len(pending_local_paths)} photo(s) to eBay..."):
+                        for local_path in pending_local_paths:
+                            uploaded_url = ebay_client.upload_image_file(local_path)
+                            if uploaded_url not in hosted_urls:
+                                hosted_urls.append(uploaded_url)
+                            uploaded_local_paths.add(str(local_path))
+                            publish_card["image_urls"] = "\n".join(hosted_urls)
+                            database.update_card(card["id"], {
+                                "image_urls": publish_card["image_urls"],
+                                "ebay_uploaded_local_images": "\n".join(sorted(uploaded_local_paths)),
+                            })
+                inventory_payload, offer_payload = listing_payloads(publish_card, ebay_config)
                 ebay_client.create_inventory_item(card["sku"], inventory_payload)
                 offer_id = ebay_offer_id.strip() or ebay_client.create_offer(offer_payload)
                 listing_id = ebay_client.publish_offer(offer_id)
@@ -1752,7 +1958,7 @@ with listing_tab:
                     "listing_title": title.strip(),
                     "listing_description": description.strip(),
                     "list_price": float(list_price),
-                    "image_urls": image_urls.strip(),
+                    "image_urls": publish_card["image_urls"],
                     "status": "Listed",
                 })
                 st.success(f"Published eBay listing {listing_id}.")

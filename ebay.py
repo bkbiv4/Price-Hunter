@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import mimetypes
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -99,6 +101,36 @@ class EbayClient:
     def test_connection(self) -> dict[str, Any]:
         return self._request("GET", "/sell/inventory/v1/getVersion")
 
+    def upload_image_file(self, image_path: str | Path) -> str:
+        """Upload a local image to eBay Picture Services and return its HTTPS URL."""
+        path = Path(image_path).resolve()
+        if not path.is_file():
+            raise EbayError(f"Image file was not found: {path}")
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        with path.open("rb") as image_file:
+            response = requests.post(
+                f"{self.api_base}/commerce/media/v1_beta/image/create_image_from_file",
+                headers={
+                    "Authorization": f"Bearer {self.access_token()}",
+                    "Accept-Language": "en-US",
+                },
+                files={"image": (path.name, image_file, media_type)},
+                timeout=self.timeout,
+            )
+        data = self._json(response)
+        image_url = str(data.get("imageUrl") or "").strip()
+        if not image_url:
+            location = str(response.headers.get("Location") or "").rstrip("/")
+            image_id = location.rsplit("/", 1)[-1] if location else ""
+            if image_id:
+                image_url = str(
+                    self._request("GET", f"/commerce/media/v1_beta/image/{quote(image_id, safe='')}").get("imageUrl")
+                    or ""
+                ).strip()
+        if not image_url.startswith("https://"):
+            raise EbayError("eBay uploaded the image but returned no public HTTPS URL.")
+        return image_url
+
     def create_inventory_item(self, sku: str, payload: dict[str, Any]) -> None:
         self._request(
             "PUT",
@@ -129,6 +161,17 @@ def public_image_urls(value: Any) -> list[str]:
     ]
 
 
+def local_image_paths(value: Any) -> list[Path]:
+    """Return existing supported local image paths saved on an inventory card."""
+    supported = {".avif", ".bmp", ".gif", ".heic", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+    paths = []
+    for line in str(value or "").splitlines():
+        path = Path(line.strip())
+        if path.suffix.casefold() in supported and path.is_file():
+            paths.append(path.resolve())
+    return paths
+
+
 def listing_readiness_issues(card: dict[str, Any], config: EbayConfig | None = None) -> list[str]:
     issues = []
     if not str(card.get("sku") or "").strip():
@@ -143,8 +186,8 @@ def listing_readiness_issues(card: dict[str, Any], config: EbayConfig | None = N
         issues.append("Missing price")
     if int(card.get("quantity") or 0) <= 0:
         issues.append("No available quantity")
-    if not public_image_urls(card.get("image_urls")):
-        issues.append("Missing public HTTPS image")
+    if not public_image_urls(card.get("image_urls")) and not local_image_paths(card.get("local_image_paths")):
+        issues.append("Missing image: add a local photo or public HTTPS URL")
     if config:
         required_settings = {
             "Marketplace ID": config.marketplace_id,

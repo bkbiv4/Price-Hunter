@@ -5,23 +5,67 @@ from tempfile import TemporaryDirectory
 import database
 from business_imports import equal_card_allocations, read_ebay_workbook
 from business_ui import tax_summary_rows
-from ebay import EbayConfig, ebay_draft_row, listing_payloads, listing_readiness_issues
+from ebay import EbayClient, EbayConfig, ebay_draft_row, listing_payloads, listing_readiness_issues
 from grading import PSA_SERVICE_TIERS, grading_opportunity, psa_tier_for_value
 from receipt_scanner import allocate_receipt_amount, parse_receipt_text
 from sales import packing_slip_text
+from seller_search import SELLERS, inventory_search_query, seller_search_rows
 from listings import build_description, build_title, suggested_price
 from scp_import import collection_row_to_card, collection_type, import_identity
 from sportscardspro import available_prices, build_card_search_query, extract_card_number, inventory_grade_prices, matches_parallel, matches_terms, product_price_row, select_product_match
 from sportscardspro import SportsCardsProClient
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from tcgcollector_import import pokemon_identity, reconcile_collection_rows, tcgcollector_row_to_card
 
 
 class ListingRulesTests(unittest.TestCase):
+    def test_price_lookup_failure_is_persisted_and_cleared_after_success(self):
+        with TemporaryDirectory() as temp_dir:
+            with patch.object(database, "DB_PATH", Path(temp_dir) / "price_hunter.db"):
+                database.initialize()
+                card_id = database.add_card({
+                    "card_name": "Umbreon VMAX #215",
+                    "set_name": "Pokemon Evolving Skies",
+                })
+
+                database.record_price_lookup_failure(
+                    card_id, "No unique exact PriceCharting match was found."
+                )
+                failed = database.get_card(card_id)
+                self.assertEqual(failed["price_lookup_status"], "Failed")
+                self.assertIn("No unique exact", failed["price_lookup_error"])
+                self.assertTrue(failed["price_lookup_attempted_at"])
+
+                database.update_grade_prices(card_id, {
+                    "graded_8_price": 100.0,
+                    "graded_9_price": 200.0,
+                    "psa_10_price": 300.0,
+                })
+                refreshed = database.get_card(card_id)
+                self.assertEqual(refreshed["price_lookup_status"], "Succeeded")
+                self.assertEqual(refreshed["price_lookup_error"], "")
+                self.assertEqual(refreshed["grade_prices_refreshed"], 1)
+
+    def test_seller_search_has_twenty_unique_sellers_and_encoded_links(self):
+        self.assertEqual(len(SELLERS), 20)
+        self.assertEqual(len({seller.name for seller in SELLERS}), 20)
+        rows = seller_search_rows("Umbreon VMAX #215", ["TCGplayer", "COMC"])
+        self.assertEqual([row["Seller"] for row in rows], ["TCGplayer", "COMC"])
+        self.assertIn("Umbreon+VMAX+%23215", rows[0]["Search"])
+        self.assertIn("site%3Acomc.com", rows[1]["Search"])
+
+    def test_inventory_seller_query_includes_grade_without_duplicate_number(self):
+        query = inventory_search_query({
+            "card_name": "Umbreon VMAX #215", "set_name": "Pokemon Evolving Skies",
+            "card_number": "215", "condition": "Graded", "grader": "PSA", "grade": "10",
+        })
+        self.assertEqual(query, "Umbreon VMAX #215 Pokemon Evolving Skies PSA 10")
+
     def test_card_number_parser_supports_one_piece_codes(self):
         self.assertEqual(extract_card_number("Black Vortex [Foil] OP09-097"), "OP09-097")
         self.assertEqual(extract_card_number("Sabo [Foil] P-073"), "P-073")
         self.assertEqual(extract_card_number("Patrick Mahomes #340"), "340")
+        self.assertEqual(extract_card_number("Genesect V #185 [HOLO]"), "185")
         self.assertEqual(extract_card_number("DON!! Card [Luffy]"), "")
 
     def test_sportscardspro_match_requires_exact_pokemon_identity(self):
@@ -42,6 +86,14 @@ class ListingRulesTests(unittest.TestCase):
             self.assertEqual(client.search_pokemon("Umbreon"), [{"id": "1"}])
         get.assert_called_once_with(
             "products", base_url=client.POKEMON_BASE_URL, q="Umbreon"
+        )
+
+    def test_pokemon_product_uses_pricecharting_catalog(self):
+        client = SportsCardsProClient("token")
+        with patch.object(client, "_get", return_value={"id": "1"}) as get:
+            self.assertEqual(client.product("1", pokemon=True), {"id": "1"})
+        get.assert_called_once_with(
+            "product", base_url=client.POKEMON_BASE_URL, id="1"
         )
 
     def test_tcgcollector_mapping_and_quantity_reconciliation(self):
@@ -267,11 +319,27 @@ Test card,318612614447,1,"$1,433.66","$1,325.00",$0.00,$102.69,$5.97,$220.94,$0.
             "new-price": 800,
             "graded-price": 900,
             "manual-only-price": 1000,
+            "bgs-10-price": 1100,
+            "condition-20-price": 2500,
+            "condition-17-price": 1050,
+            "condition-19-price": 1400,
+            "condition-18-price": 950,
+            "condition-21-price": 1200,
+            "condition-22-price": 1300,
         })
         self.assertEqual(prices, {
             "graded_8_price": 8.0,
             "graded_9_price": 9.0,
             "psa_10_price": 10.0,
+            "bgs_10_price": 11.0,
+            "bgs_black_10_price": 25.0,
+            "cgc_10_price": 10.5,
+            "cgc_pristine_10_price": 14.0,
+            "sgc_10_price": 9.5,
+            "tag_10_price": 12.0,
+            "ace_10_price": 13.0,
+            "bgs_black_10_price_source": "SportsCardsPro API",
+            "cgc_pristine_10_price_source": "SportsCardsPro API",
         })
 
     def test_parallel_filter_only_uses_variant_labels(self):
@@ -708,7 +776,35 @@ class InventoryWorkflowTests(unittest.TestCase):
             "quantity": 1,
             "image_urls": "http://example.com/not-public-enough.jpg",
         })
-        self.assertEqual(issues, ["Missing public HTTPS image"])
+        self.assertEqual(issues, ["Missing image: add a local photo or public HTTPS URL"])
+
+    def test_ebay_readiness_accepts_existing_local_image(self):
+        with TemporaryDirectory() as temp_dir:
+            image = Path(temp_dir) / "front.jpg"
+            image.write_bytes(b"image")
+            issues = listing_readiness_issues({
+                "sku": "PH-1", "listing_title": "Card title",
+                "listing_description": "Card description", "list_price": 10.0,
+                "quantity": 1, "local_image_paths": str(image),
+            })
+        self.assertEqual(issues, [])
+
+    def test_media_api_upload_returns_ebay_image_url(self):
+        config = EbayConfig(
+            environment="Sandbox", client_id="", client_secret="", refresh_token="",
+            access_token="token", marketplace_id="EBAY_US", merchant_location_key="home",
+            category_id="123", fulfillment_policy_id="f", payment_policy_id="p",
+            return_policy_id="r", condition="USED_EXCELLENT",
+        )
+        with TemporaryDirectory() as temp_dir:
+            image = Path(temp_dir) / "front.jpg"
+            image.write_bytes(b"image")
+            response = Mock(ok=True, content=b"{}", status_code=201, headers={})
+            response.json.return_value = {"imageUrl": "https://i.ebayimg.com/example.jpg"}
+            with patch("ebay.requests.post", return_value=response) as post:
+                url = EbayClient(config).upload_image_file(image)
+        self.assertEqual(url, "https://i.ebayimg.com/example.jpg")
+        self.assertIn("/commerce/media/v1_beta/image/create_image_from_file", post.call_args.args[0])
 
     def test_ebay_draft_row_uses_public_images_and_saved_fields(self):
         row = ebay_draft_row({

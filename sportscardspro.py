@@ -59,9 +59,10 @@ class SportsCardsProClient:
         data = self._get("products", base_url=self.POKEMON_BASE_URL, q=query.strip())
         return list(data.get("products", []))
 
-    def product(self, product_id: str) -> dict[str, Any]:
-        return self._get("product", id=str(product_id))
-
+    def product(self, product_id: str, *, pokemon: bool = False) -> dict[str, Any]:
+        """Fetch one product from the catalog that owns its ID."""
+        base_url = self.POKEMON_BASE_URL if pokemon else self.BASE_URL
+        return self._get("product", base_url=base_url, id=str(product_id))
 
 def cents_to_dollars(value: Any) -> float | None:
     if value in (None, ""):
@@ -82,6 +83,10 @@ PRICE_FIELDS = {
     "BGS 10": "bgs-10-price",
     "CGC 10": "condition-17-price",
     "SGC 10": "condition-18-price",
+    "CGC 10 Pristine": "condition-19-price",
+    "BGS 10 Black": "condition-20-price",
+    "TAG 10": "condition-21-price",
+    "ACE 10": "condition-22-price",
 }
 
 
@@ -96,11 +101,24 @@ def available_prices(product: dict[str, Any]) -> dict[str, float]:
 
 
 def inventory_grade_prices(product: dict[str, Any]) -> dict[str, float | None]:
-    """Return the three grading values displayed in the inventory viewer."""
+    """Return grader-specific values documented by the Prices API."""
     return {
         "graded_8_price": cents_to_dollars(product.get("new-price")),
         "graded_9_price": cents_to_dollars(product.get("graded-price")),
         "psa_10_price": cents_to_dollars(product.get("manual-only-price")),
+        "bgs_10_price": cents_to_dollars(product.get("bgs-10-price")),
+        "bgs_black_10_price": cents_to_dollars(product.get("condition-20-price")),
+        "cgc_10_price": cents_to_dollars(product.get("condition-17-price")),
+        "cgc_pristine_10_price": cents_to_dollars(product.get("condition-19-price")),
+        "sgc_10_price": cents_to_dollars(product.get("condition-18-price")),
+        "tag_10_price": cents_to_dollars(product.get("condition-21-price")),
+        "ace_10_price": cents_to_dollars(product.get("condition-22-price")),
+        "bgs_black_10_price_source": (
+            "SportsCardsPro API" if cents_to_dollars(product.get("condition-20-price")) else ""
+        ),
+        "cgc_pristine_10_price_source": (
+            "SportsCardsPro API" if cents_to_dollars(product.get("condition-19-price")) else ""
+        ),
     }
 
 
@@ -130,7 +148,7 @@ def build_card_search_query(*parts: Any) -> str:
 def extract_card_number(product_name: Any) -> str:
     """Extract hash-style or trading-card codes from the end of a product name."""
     name = str(product_name or "").strip()
-    hash_match = re.search(r"#([^\s\]]+)\s*$", name)
+    hash_match = re.search(r"#([^\s\]]+)(?:\s+\[[^]]+])?\s*$", name)
     if hash_match:
         return hash_match.group(1)
     code_match = re.search(r"\b([A-Z]{1,5}(?:\d{2})?-\d{3})\s*$", name, re.IGNORECASE)
@@ -149,11 +167,11 @@ def _product_identity(name: Any, set_name: Any, card_number: Any = "") -> tuple[
     number = str(card_number or extract_card_number(product_name)).split("/", 1)[0]
     if number.isdigit():
         number = str(int(number))
+    base_name = re.sub(r"\s*\[[^]]+]", "", product_name).strip()
     base_name = re.sub(
-        r"\s+(?:#[^\s]+|[A-Z]{1,5}(?:\d{2})?-\d{3})\s*$", "", product_name,
+        r"\s+(?:#[^\s]+|[A-Z]{1,5}(?:\d{2})?-\d{3})\s*$", "", base_name,
         flags=re.IGNORECASE,
     )
-    base_name = re.sub(r"\s*\[[^]]+]", "", base_name).strip()
     return (
         _identity_text(set_name), _identity_text(base_name),
         _identity_text(number), _identity_text(variant),

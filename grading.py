@@ -32,6 +32,67 @@ PSA_SERVICE_TIERS = [
     },
 ]
 
+# Planning defaults, deliberately kept in one place so they can be replaced by a
+# live service-level feed later. Availability is not implied by this table.
+GRADING_SERVICE_TIERS = {
+    "PSA": PSA_SERVICE_TIERS,
+    "BGS": [
+        {"name": "Base", "fee": 17.95, "max_declared_value": None, "turnaround": "75+ business days"},
+        {"name": "Standard", "fee": 34.95, "max_declared_value": None, "turnaround": "45 business days"},
+        {"name": "Express", "fee": 79.95, "max_declared_value": None, "turnaround": "15 business days"},
+        {"name": "Priority", "fee": 124.95, "max_declared_value": None, "turnaround": "5 business days"},
+    ],
+    "CGC": [
+        {"name": "Bulk", "fee": 17.0, "max_declared_value": 500.0, "turnaround": "150 working days"},
+        {"name": "Economy", "fee": 20.0, "max_declared_value": 1000.0, "turnaround": "90 working days"},
+        {"name": "Standard", "fee": 55.0, "max_declared_value": 3000.0, "turnaround": "10 working days"},
+        {"name": "Express", "fee": 100.0, "max_declared_value": 10000.0, "turnaround": "5 working days"},
+        {"name": "WalkThrough", "fee": 300.0, "max_declared_value": 100000.0, "turnaround": "2 working days"},
+    ],
+}
+
+
+def grader_strategy(
+    raw_value: float,
+    psa_10_value: float,
+    copy_quality: str,
+    black_label_multiplier: float = 3.0,
+    bgs_black_10_value: float = 0.0,
+) -> dict[str, Any]:
+    """Return transparent company/strategy suggestions without inventing comps."""
+    raw_value = float(raw_value or 0)
+    psa_10_value = float(psa_10_value or 0)
+    multiplier = max(1.0, float(black_label_multiplier or 1))
+    actual_black_label = float(bgs_black_10_value or 0)
+    jackpot = actual_black_label or (round(psa_10_value * multiplier, 2) if psa_10_value else 0.0)
+    ten_multiple = psa_10_value / raw_value if raw_value > 0 else 0.0
+
+    if not psa_10_value:
+        action, reason = "Needs comps", "Fetch a PSA 10 value before choosing a grader."
+    elif raw_value < 25 and ten_multiple < 4:
+        action, reason = "Sell raw", "Low raw value and limited PSA 10 multiplier."
+    elif psa_10_value <= raw_value * 1.35:
+        action, reason = "Sell raw", "PSA 10 upside is too close to raw value."
+    elif copy_quality == "Exceptional / flawless candidate" and jackpot >= psa_10_value * 2:
+        action, reason = "BGS jackpot swing", "Exceptional copy and large modeled Black Label upside."
+    elif copy_quality == "Visible flaw / likely 8 or lower":
+        action, reason = "Sell raw", "The likely grade does not justify the downside."
+    else:
+        action, reason = "PSA resale play", "PSA 10 offers the clearest measured upside and liquidity path."
+
+    return {
+        "recommended_path": action,
+        "recommendation_reason": reason,
+        "best_for_resale": "PSA",
+        "best_for_speed": "BGS Priority",
+        "best_for_budget": "BGS Base",
+        "jackpot_path": "BGS Black Label",
+        "modeled_black_label_value": jackpot,
+        "black_label_value_source": "SportsCardsPro" if actual_black_label else "Modeled scenario",
+        "psa_10_multiple": round(ten_multiple, 2),
+        "other_grader_comps_status": "Not fetched yet",
+    }
+
 
 def psa_declared_value(card: dict[str, Any], basis: str) -> float:
     values = {

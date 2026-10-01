@@ -165,8 +165,20 @@ def initialize() -> None:
                 graded_8_price REAL,
                 graded_9_price REAL,
                 psa_10_price REAL,
+                bgs_10_price REAL,
+                bgs_black_10_price REAL,
+                cgc_10_price REAL,
+                cgc_pristine_10_price REAL,
+                sgc_10_price REAL,
+                tag_10_price REAL,
+                ace_10_price REAL,
+                bgs_black_10_price_source TEXT NOT NULL DEFAULT '',
+                cgc_pristine_10_price_source TEXT NOT NULL DEFAULT '',
                 grade_prices_refreshed INTEGER NOT NULL DEFAULT 0,
                 grade_prices_refreshed_at TEXT,
+                price_lookup_status TEXT NOT NULL DEFAULT '',
+                price_lookup_error TEXT NOT NULL DEFAULT '',
+                price_lookup_attempted_at TEXT,
                 list_price REAL,
                 storage_location TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
@@ -174,6 +186,8 @@ def initialize() -> None:
                 ebay_item_id TEXT NOT NULL DEFAULT '',
                 ebay_offer_id TEXT NOT NULL DEFAULT '',
                 image_urls TEXT NOT NULL DEFAULT '',
+                local_image_paths TEXT NOT NULL DEFAULT '',
+                ebay_uploaded_local_images TEXT NOT NULL DEFAULT '',
                 listing_title TEXT NOT NULL DEFAULT '',
                 listing_description TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -194,10 +208,25 @@ def initialize() -> None:
             db.execute("ALTER TABLE cards ADD COLUMN graded_9_price REAL")
         if "psa_10_price" not in existing:
             db.execute("ALTER TABLE cards ADD COLUMN psa_10_price REAL")
+        for column in (
+            "bgs_10_price", "bgs_black_10_price", "cgc_10_price",
+            "cgc_pristine_10_price", "sgc_10_price", "tag_10_price", "ace_10_price",
+        ):
+            if column not in existing:
+                db.execute(f"ALTER TABLE cards ADD COLUMN {column} REAL")
+        for column in ("bgs_black_10_price_source", "cgc_pristine_10_price_source"):
+            if column not in existing:
+                db.execute(f"ALTER TABLE cards ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         if "grade_prices_refreshed" not in existing:
             db.execute("ALTER TABLE cards ADD COLUMN grade_prices_refreshed INTEGER NOT NULL DEFAULT 0")
         if "grade_prices_refreshed_at" not in existing:
             db.execute("ALTER TABLE cards ADD COLUMN grade_prices_refreshed_at TEXT")
+        if "price_lookup_status" not in existing:
+            db.execute("ALTER TABLE cards ADD COLUMN price_lookup_status TEXT NOT NULL DEFAULT ''")
+        if "price_lookup_error" not in existing:
+            db.execute("ALTER TABLE cards ADD COLUMN price_lookup_error TEXT NOT NULL DEFAULT ''")
+        if "price_lookup_attempted_at" not in existing:
+            db.execute("ALTER TABLE cards ADD COLUMN price_lookup_attempted_at TEXT")
         if "allocated_cost_total" not in existing:
             db.execute("ALTER TABLE cards ADD COLUMN allocated_cost_total REAL")
         if "grading_cost" not in existing:
@@ -206,6 +235,10 @@ def initialize() -> None:
             db.execute("ALTER TABLE cards ADD COLUMN ebay_offer_id TEXT NOT NULL DEFAULT ''")
         if "image_urls" not in existing:
             db.execute("ALTER TABLE cards ADD COLUMN image_urls TEXT NOT NULL DEFAULT ''")
+        if "local_image_paths" not in existing:
+            db.execute("ALTER TABLE cards ADD COLUMN local_image_paths TEXT NOT NULL DEFAULT ''")
+        if "ebay_uploaded_local_images" not in existing:
+            db.execute("ALTER TABLE cards ADD COLUMN ebay_uploaded_local_images TEXT NOT NULL DEFAULT ''")
 
         db.executescript(
             """
@@ -674,6 +707,9 @@ def update_grade_prices(item_id: int, values: dict[str, Any]) -> None:
             SET {assignments},
                 grade_prices_refreshed = 1,
                 grade_prices_refreshed_at = CURRENT_TIMESTAMP,
+                price_lookup_status = 'Succeeded',
+                price_lookup_error = '',
+                price_lookup_attempted_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
@@ -1524,6 +1560,22 @@ def allocate_purchases(purchase_ids: list[int], allocations: list[dict[str, Any]
             )
         db.execute(
             f"UPDATE purchases SET status = 'Allocated' WHERE id IN ({marks})", tuple(purchase_ids)
+        )
+
+
+def record_price_lookup_failure(item_id: int, error: str) -> None:
+    """Persist the latest failed catalog lookup so Data Quality can surface it."""
+    with connection() as db:
+        db.execute(
+            """
+            UPDATE cards
+            SET price_lookup_status = 'Failed',
+                price_lookup_error = ?,
+                price_lookup_attempted_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (str(error).strip()[:1000], item_id),
         )
 
 

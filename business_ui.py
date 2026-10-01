@@ -12,7 +12,15 @@ import pandas as pd
 import streamlit as st
 
 import database
-from grading import PSA_SERVICE_TIERS, grading_opportunity, psa_declared_value, psa_tier_for_value
+from grading import (
+    GRADING_SERVICE_TIERS,
+    PSA_SERVICE_TIERS,
+    grader_strategy,
+    grading_opportunity,
+    psa_declared_value,
+    psa_tier_for_value,
+)
+from grading_verifier import verify_grading_services
 from receipt_scanner import allocate_receipt_amount, scan_receipt_image, scan_receipt_pdf
 from sales import packing_slip_text
 from business_imports import (
@@ -1468,19 +1476,31 @@ def render_sales() -> None:
 def render_grading() -> None:
     st.subheader("Grading")
     cards = [card for card in database.all_cards() if int(card["quantity"]) > 0]
-    st.markdown("#### Grading opportunity report")
+    st.markdown("#### Grading strategy dashboard")
     st.caption(
-        "Ranks ungraded inventory by probability-weighted profit. Estimates are planning tools, "
-        "not guaranteed grades or sale prices."
+        "Choose the best grading lane for resale, speed, budget, or a high-upside pristine-card swing. "
+        "PSA, BGS, CGC, and SGC values come from SportsCardsPro when available; missing Black Label "
+        "values use the adjustable scenario and are labeled as modeled."
     )
-    tier_frame = pd.DataFrame(PSA_SERVICE_TIERS)
+    strategy_cards = st.columns(4)
+    strategy_cards[0].metric("Best for resale", "PSA", "Strong liquidity")
+    strategy_cards[1].metric("Best for speed", "BGS Priority", "5 business days (planning)")
+    strategy_cards[2].metric("Best budget lane", "BGS Base", "$17.95 + shipping")
+    strategy_cards[3].metric("Jackpot lane", "BGS Black Label", "Exceptional copies only")
+
+    tier_rows = []
+    for company, tiers in GRADING_SERVICE_TIERS.items():
+        for tier in tiers:
+            tier_rows.append({"Company": company, **tier})
+    tier_frame = pd.DataFrame(tier_rows)
     tier_frame = tier_frame.rename(columns={
         "name": "Tier",
         "fee": "Fee",
         "max_declared_value": "Max declared value",
         "turnaround": "Turnaround",
     })
-    with st.expander("PSA service tiers"):
+    with st.expander("Compare grading company service levels"):
+        st.caption("Planning defaults; verify price, availability, turnaround, and insurance limits before submitting.")
         st.dataframe(
             tier_frame,
             use_container_width=True,
@@ -1492,6 +1512,22 @@ def render_grading() -> None:
                 ),
             },
         )
+        if st.button("Verify all tiers against official sites", key="verify_grading_tiers"):
+            with st.spinner("Checking PSA, BGS, and CGC..."):
+                st.session_state["grading_verification"] = verify_grading_services()
+        verification = st.session_state.get("grading_verification")
+        if verification:
+            status_columns = st.columns(3)
+            for column, company in zip(status_columns, ("PSA", "BGS", "CGC")):
+                result = verification["companies"][company]
+                column.metric(company, result["status"])
+                column.link_button("Official source", result["source"])
+                if result["status"] == "Review":
+                    review = [row["tier"] for row in result["tiers"] if row["status"] == "Review"]
+                    column.caption("Review: " + ", ".join(review))
+                elif result["error"]:
+                    column.caption(result["error"])
+            st.caption(f"Last checked: {verification['checked_at']} (UTC). Verification never changes saved tiers automatically.")
     settings = st.columns(4)
     use_psa_tiers = settings[0].checkbox(
         "Use PSA tier fees",
@@ -1526,10 +1562,24 @@ def render_grading() -> None:
         key="opportunity_probability_10",
     )
     probability_total = probability_8 + probability_9 + probability_10
+    strategy_settings = st.columns(2)
+    copy_quality = strategy_settings[0].selectbox(
+        "Copy condition", ["Strong 9/10 candidate", "Exceptional / flawless candidate", "Visible flaw / likely 8 or lower"],
+        key="opportunity_copy_quality",
+    )
+    black_label_multiplier = strategy_settings[1].number_input(
+        "Black Label scenario (× PSA 10)", min_value=1.0, max_value=20.0, value=3.0, step=0.25,
+        help="A what-if model until actual BGS Black Label sold values are fetched.",
+        key="opportunity_black_label_multiplier",
+    )
     candidates = [
         card for card in cards
         if card.get("condition") != "Graded"
-        and any(card.get(column) for column in ("graded_8_price", "graded_9_price", "psa_10_price"))
+        and any(card.get(column) for column in (
+            "graded_8_price", "graded_9_price", "psa_10_price", "bgs_10_price",
+            "bgs_black_10_price", "cgc_10_price", "cgc_pristine_10_price", "sgc_10_price",
+            "tag_10_price", "ace_10_price",
+        ))
     ]
     if abs(probability_total - 100) > 0.01:
         st.warning(f"Grade probabilities must total 100%; they currently total {probability_total:.1f}%.")
@@ -1570,6 +1620,19 @@ def render_grading() -> None:
                 grading_tier=recommended_tier,
                 declared_value=declared_value,
             )
+            row.update(grader_strategy(
+                row["raw_value"], row["psa_10_value"], copy_quality, black_label_multiplier,
+                float(card.get("bgs_black_10_price") or 0),
+            ))
+            row.update({
+                "bgs_10_value": float(card.get("bgs_10_price") or 0),
+                "bgs_black_10_value": float(card.get("bgs_black_10_price") or 0),
+                "cgc_10_value": float(card.get("cgc_10_price") or 0),
+                "cgc_pristine_10_value": float(card.get("cgc_pristine_10_price") or 0),
+                "sgc_10_value": float(card.get("sgc_10_price") or 0),
+                "tag_10_value": float(card.get("tag_10_price") or 0),
+                "ace_10_value": float(card.get("ace_10_price") or 0),
+            })
             if use_psa_tiers and recommended_tier is None:
                 row["recommended_tier"] = "Above Walk-Through"
                 row["tier_covered"] = False
@@ -1599,7 +1662,10 @@ def render_grading() -> None:
                 "cost_basis", "raw_value", "grade_8_value", "grade_9_value", "psa_10_value",
                 "declared_value", "tier_fee", "tier_max_value", "grading_cost",
                 "grade_8_profit", "grade_9_profit", "psa_10_profit",
-                "expected_value", "expected_profit", "expected_uplift_vs_raw",
+                "expected_value", "expected_profit", "expected_uplift_vs_raw", "modeled_black_label_value",
+                "bgs_10_value", "bgs_black_10_value", "cgc_10_value",
+                "cgc_pristine_10_value", "sgc_10_value",
+                "tag_10_value", "ace_10_value",
             ]
             st.dataframe(
                 opportunity_frame,
