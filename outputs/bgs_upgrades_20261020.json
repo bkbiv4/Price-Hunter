@@ -1,0 +1,217 @@
+{
+  "backup": "C:\\Coding\\Price Hunter\\price_hunter.before-bgs-upgrade-20261020-164706.db",
+  "updated": [
+    {
+      "id": 19,
+      "sku": "PH-000019",
+      "card_name": "Monkey.D.Luffy [SP PRB-02] EB02-061",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "9.5",
+        "certification_number": "21053106"
+      }
+    },
+    {
+      "id": 170,
+      "sku": "PH-000170",
+      "card_name": "Zehahahahaha! [Alternate Art] OP16-116",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "9.5",
+        "certification_number": "21053110"
+      }
+    },
+    {
+      "id": 471,
+      "sku": "PH-000471",
+      "card_name": "Monkey.D.Luffy [Alternate Art] OP15-119",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "9.5",
+        "certification_number": "21053115"
+      }
+    },
+    {
+      "id": 139,
+      "sku": "PH-000139",
+      "card_name": "Nami [Alternate Art] OP15-086",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "10",
+        "certification_number": "21053118"
+      }
+    },
+    {
+      "id": 7887,
+      "sku": "PH-007887",
+      "card_name": "Boa Hancock [Alternate Art] OP14-112",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "10",
+        "certification_number": "21053126"
+      }
+    },
+    {
+      "id": 43,
+      "sku": "PH-000043",
+      "card_name": "Tashigi [SP Foil] OP14-029",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "9.5",
+        "certification_number": "21053129"
+      }
+    },
+    {
+      "id": 237,
+      "sku": "PH-000237",
+      "card_name": "Ms. All Sunday [SP Foil] OP14-084",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "9.5",
+        "certification_number": "21053133"
+      }
+    },
+    {
+      "id": 200,
+      "sku": "PH-000200",
+      "card_name": "Edward.Newgate [SP] OP13-042",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "10",
+        "certification_number": "21053135"
+      }
+    },
+    {
+      "id": 398,
+      "sku": "PH-000398",
+      "card_name": "Roronoa Zoro OP13-037",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "9.5",
+        "certification_number": "21053137"
+      }
+    },
+    {
+      "id": 143,
+      "sku": "PH-000143",
+      "card_name": "Nico Robin [SP] EB03-055",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "9",
+        "certification_number": "21053142"
+      }
+    },
+    {
+      "id": 7927,
+      "sku": "PH-007927",
+      "card_name": "Roronoa Zoro [SP] EB04-007",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "9.5",
+        "certification_number": "21053152"
+      }
+    },
+    {
+      "id": 210,
+      "sku": "PH-000210",
+      "card_name": "Nami [Alternate Art] PRB02-012",
+      "before": {
+        "condition": "Raw / Ungraded",
+        "grader": "",
+        "grade": "",
+        "certification_number": ""
+      },
+      "after": {
+        "condition": "Graded",
+        "grader": "BGS",
+        "grade": "10",
+        "certification_number": "21053154"
+      }
+    }
+  ],
+  "already_correct": [
+    {
+      "id": 33,
+      "certificate": "21053157"
+    }
+  ],
+  "grader_basis": "BGS inferred from existing certificate 21053157 in the supplied batch; grades and certificate numbers supplied by user.",
+  "verification": "All 13 certificates matched exactly once; 12 raw cards upgraded; quantities, costs, PSA copy and all other card fields preserved; database integrity passed."
+}

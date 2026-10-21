@@ -893,6 +893,25 @@ def update_sale(sale_id: int, values: dict[str, Any]) -> None:
             f"UPDATE sales SET {assignments} WHERE id = ?",
             (*edits.values(), sale_id),
         )
+        _sync_sale_item_prices(db, sale_id, float(merged["item_subtotal"] or 0))
+        _record_event(db, None, "Sale edited", f"Sale #{sale_id}: " + ", ".join(
+            f"{key}: {current[key]} → {value}" for key, value in edits.items() if current[key] != value
+        ), 0, None, "sale", sale_id)
+
+
+def _sync_sale_item_prices(db: sqlite3.Connection, sale_id: int, subtotal: float) -> None:
+    """Keep packing-slip line totals consistent, preserving relative item values."""
+    items = db.execute("SELECT * FROM sale_items WHERE sale_id=? ORDER BY id", (sale_id,)).fetchall()
+    if not items:
+        return
+    weight = sum(float(r["unit_price"]) * int(r["quantity"]) for r in items)
+    units = sum(int(r["quantity"]) for r in items)
+    remaining = round(subtotal, 2)
+    for index, item in enumerate(items):
+        share = (float(item["unit_price"]) * int(item["quantity"]) / weight) if weight else int(item["quantity"]) / units
+        amount = remaining if index == len(items) - 1 else round(subtotal * share, 2)
+        remaining = round(remaining - amount, 2)
+        db.execute("UPDATE sale_items SET unit_price=? WHERE id=?", (amount / int(item["quantity"]), item["id"]))
 
 
 def delete_sale(sale_id: int, restore_inventory: bool = False) -> None:
@@ -926,55 +945,109 @@ def delete_sale(sale_id: int, restore_inventory: bool = False) -> None:
 
 
 def link_sale_to_card(sale_id: int, card_id: int, reduce_inventory: bool = True) -> None:
+    """Link one card without repeating a previously recorded stock deduction."""
     with connection() as db:
         sale = db.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
-        card = db.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
-        if not sale or not card:
-            raise ValueError("Sale or inventory card was not found.")
-        sold_quantity = max(1, int(sale["quantity"]))
-        acquisition_cost = float(card["cost"] or 0)
-        grading_cost = float(card["grading_cost"] or 0)
-        unit_cost = acquisition_cost + grading_cost
-        cost_of_goods = round(unit_cost * sold_quantity, 2)
-        profit = round(float(sale["net_amount"] or 0) - cost_of_goods, 2)
-        db.execute(
-            "UPDATE sales SET card_id = ?, cost_of_goods = ?, profit = ? WHERE id = ?",
-            (card_id, cost_of_goods, profit, sale_id),
+        if not sale:
+            raise ValueError("Sale was not found.")
+        count = db.execute("SELECT COUNT(*) FROM sale_items WHERE sale_id = ?", (sale_id,)).fetchone()[0]
+        if count > 1:
+            raise ValueError("Use Manage linked cards to edit a multi-card sale.")
+        quantity = int(sale["quantity"])
+    set_sale_items(sale_id, [{"card_id": card_id, "quantity": quantity}], reduce_inventory)
+
+
+def sale_inventory_deductions(sale_id: int) -> dict[int, int]:
+    """Outstanding stock deductions recorded for this sale, by card."""
+    with connection() as db:
+        return _sale_inventory_deductions(db, sale_id)
+
+
+def _sale_inventory_deductions(db: sqlite3.Connection, sale_id: int) -> dict[int, int]:
+    return {
+        int(row["card_id"]): max(0, -int(row["change"]))
+        for row in db.execute(
+            "SELECT card_id, SUM(quantity_change) AS change FROM inventory_events "
+            "WHERE reference_type = 'sale' AND reference_id = ? AND card_id IS NOT NULL GROUP BY card_id",
+            (sale_id,),
         )
-        db.execute(
-            """
-            INSERT INTO sale_items (
-                sale_id, card_id, card_sku, card_name, quantity, unit_price, unit_cost,
-                acquisition_unit_cost, grading_unit_cost
-            )
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-            WHERE NOT EXISTS (
-                SELECT 1 FROM sale_items WHERE sale_id = ? AND card_id = ?
-            )
-            """,
-            (
-                sale_id, card_id, card["sku"], card["card_name"], sold_quantity,
-                round(float(sale["item_subtotal"] or 0) / sold_quantity, 2), unit_cost,
-                acquisition_cost, grading_cost,
-                sale_id, card_id,
-            ),
-        )
-        if reduce_inventory:
-            remaining = max(0, int(card["quantity"]) - sold_quantity)
-            status = "Sold" if remaining == 0 else card["status"]
+    }
+
+
+def set_sale_items(sale_id: int, items: list[dict[str, Any]], reduce_inventory: bool = True) -> None:
+    """Atomically replace linked cards and reconcile recorded inventory movements.
+
+    This changes the card allocation, not the sale's financial subtotal. Existing
+    per-card costs are retained for unchanged links. Historical links without a
+    recorded deduction do not cause an invented restoration when removed.
+    """
+    with connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        sale = db.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
+        if not sale:
+            raise ValueError("Sale was not found.")
+        if sale["status"] not in {"Completed", "Partially Refunded"} or sale["inventory_restored"]:
+            raise ValueError("Returned or cancelled sales cannot have their inventory links changed.")
+        old = {r["card_id"]: dict(r) for r in db.execute("SELECT * FROM sale_items WHERE sale_id = ?", (sale_id,))}
+        deductions = _sale_inventory_deductions(db, sale_id)
+        prepared = {}
+        for item in items:
+            card_id = int(item["card_id"])
+            quantity = int(item["quantity"])
+            if quantity < 1 or quantity != item["quantity"] or card_id in prepared:
+                raise ValueError("Choose each card once with a positive whole quantity.")
+            card = db.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
+            if not card:
+                raise ValueError("Inventory card was not found.")
+            prepared[card_id] = (card, quantity)
+        # Validate every stock change before writing anything.
+        changes = []
+        for card_id in set(prepared) | set(deductions):
+            card = db.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
+            if not card:
+                continue
+            quantity = prepared[card_id][1] if card_id in prepared else 0
+            previous = deductions.get(card_id, 0)
+            target = quantity if reduce_inventory else min(previous, quantity)
+            change = previous - target
+            remaining = int(card["quantity"]) + change
+            if remaining < 0:
+                raise ValueError(f"{card['sku']} has insufficient inventory for this sale.")
+            if change:
+                changes.append((card, change, remaining))
+        for card, change, remaining in changes:
+            status = "Sold" if remaining == 0 else ("Ready" if card["status"] == "Sold" else card["status"])
             db.execute(
-                """
-                UPDATE cards
-                SET quantity = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (remaining, status, card_id),
+                "UPDATE cards SET quantity = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (remaining, status, card["id"]),
             )
             _record_event(
-                db, card_id, "Sold",
-                f"Linked imported sale {sale['order_number']}; net ${float(sale['net_amount'] or 0):.2f}",
-                -sold_quantity, float(sale["net_amount"] or 0), "sale", sale_id,
+                db, card["id"], "Sold" if change < 0 else "Sale link corrected",
+                f"Inventory reconciled for sale #{sale_id}", change, None, "sale", sale_id,
             )
+        total_quantity = sum(q for _, q in prepared.values())
+        db.execute("DELETE FROM sale_items WHERE sale_id = ?", (sale_id,))
+        cogs = 0.0
+        for card_id, (card, quantity) in prepared.items():
+            prior = old.get(card_id)
+            acquisition = float(prior["acquisition_unit_cost"] if prior else card["cost"] or 0)
+            grading = float(prior["grading_unit_cost"] if prior else card["grading_cost"] or 0)
+            unit_cost = float(prior["unit_cost"] if prior else acquisition + grading)
+            cogs += unit_cost * quantity
+            db.execute(
+                "INSERT INTO sale_items (sale_id,card_id,card_sku,card_name,quantity,unit_price,unit_cost,acquisition_unit_cost,grading_unit_cost) VALUES (?,?,?,?,?,?,?,?,?)",
+                (sale_id, card_id, card["sku"], card["card_name"], quantity,
+                 float(prior["unit_price"]) if prior and len(prepared) > 1 else round(float(sale["item_subtotal"]) / total_quantity, 2),
+                 unit_cost, acquisition, grading),
+            )
+        db.execute(
+            "UPDATE sales SET card_id=?, quantity=?, cost_of_goods=?, profit=? WHERE id=?",
+            (next(iter(prepared)) if len(prepared) == 1 else None, total_quantity or sale["quantity"],
+             round(cogs, 2) if prepared else None,
+             round(float(sale["net_amount"]) - cogs, 2) if prepared else None, sale_id),
+        )
+        _sync_sale_item_prices(db, sale_id, float(sale["item_subtotal"]))
+        _record_event(db, None, "Sale links updated", f"Sale #{sale_id}: {len(prepared)} linked cards, {total_quantity} units", 0, None, "sale", sale_id)
 
 
 def auto_match_sales_by_ebay_item_id() -> int:
@@ -988,6 +1061,8 @@ def auto_match_ebay_sales() -> dict[str, int]:
             """
             SELECT id, item_id, sku FROM sales
             WHERE card_id IS NULL AND marketplace = 'eBay'
+            AND status IN ('Completed', 'Partially Refunded') AND inventory_restored = 0
+            AND NOT EXISTS (SELECT 1 FROM sale_items WHERE sale_id = sales.id)
             """
         ).fetchall()
         matches: list[tuple[int, int]] = []

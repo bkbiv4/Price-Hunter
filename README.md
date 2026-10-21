@@ -51,6 +51,24 @@ streamlit run app.py
 
 The database is stored locally as `price_hunter.db`.
 
+## Managing sales
+
+Open **Sales → Manage sales** to search by card, buyer, order number, or sale ID.
+Edit the sale details and review the live net/profit preview before saving.
+Financial edits preserve refunds and inventory quantities.
+
+Use **Manage linked cards** to correct cards or quantities, or remove a link.
+The stock preview shows each adjustment before saving. Stock is deducted by
+default, and saving the same link again does not deduct it twice. Changing a
+link reverses its recorded deduction before applying the new one. Select
+**Already removed from inventory** only for historical stock adjustments.
+Links with no recorded deduction do not add stock back when removed.
+
+Linked-card changes preserve the sale subtotal and allocate packing-slip line
+prices proportionally. Returned/cancelled sales have locked inventory links.
+Matching by eBay item ID or SKU runs only when requested and leaves stock
+unchanged for review in Manage sales. Merely opening the page changes no sales.
+
 ## Planned eBay connection
 
 Direct eBay publishing will require an eBay Developers Program account, OAuth authorization, an inventory location, unique SKUs, and payment, fulfillment, and return business policies. Until that is configured, Price Hunter creates and tracks listing drafts without making changes to your eBay account.

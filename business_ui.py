@@ -924,6 +924,65 @@ def render_expenses() -> None:
     )
 
 
+def _render_sale_inventory(sale: dict[str, Any]) -> None:
+    sale_id = int(sale["id"])
+    st.markdown("#### Manage linked cards")
+    existing = database.sale_items(sale_id)
+    if sale.get("inventory_restored") or sale["status"] not in {"Completed", "Partially Refunded"}:
+        st.info("This sale is returned or cancelled. Its inventory links are locked.")
+        return
+    cards = {int(c["id"]): c for c in database.all_cards()}
+    old = {int(r["card_id"]): r for r in existing if r["card_id"] in cards}
+    deductions = database.sale_inventory_deductions(sale_id)
+    selected = st.multiselect(
+        "Cards sold", list(cards), default=list(old),
+        format_func=lambda i: f"{cards[i]['sku']} — {cards[i]['card_name']} — {cards[i].get('grader', '')} {cards[i].get('grade', '')} — {cards[i]['quantity']} in stock",
+        key=f"sale_cards_{sale_id}",
+    )
+    already_removed = st.checkbox(
+        "Already removed from inventory", value=False, key=f"sale_already_removed_{sale_id}",
+        help="Use only when stock was adjusted outside this sale. Existing recorded deductions will never be applied twice.",
+    )
+    items = []
+    for card_id in selected:
+        quantity = st.number_input(
+            f"Quantity sold — {cards[card_id]['sku']}", min_value=1,
+            value=int(old[card_id]["quantity"]) if card_id in old else 1, step=1,
+            key=f"sale_units_{sale_id}_{card_id}",
+        )
+        items.append({"card_id": card_id, "quantity": int(quantity)})
+    requested = {r["card_id"]: r["quantity"] for r in items}
+    preview = []
+    for card_id in set(selected) | set(deductions):
+        if card_id not in cards:
+            continue
+        previous = deductions.get(card_id, 0)
+        target = requested.get(card_id, 0)
+        if already_removed:
+            target = min(previous, target)
+        change = previous - target
+        if change:
+            preview.append({"Card": cards[card_id]["sku"], "Current stock": cards[card_id]["quantity"],
+                            "Change": change, "Stock after saving": cards[card_id]["quantity"] + change})
+    if preview:
+        st.dataframe(pd.DataFrame(preview), hide_index=True, use_container_width=True)
+    else:
+        st.caption("Saving these links leaves inventory quantities unchanged.")
+    st.caption("Sale revenue stays unchanged. Linked quantities and cost of goods update; packing-slip prices are allocated proportionally to the sale subtotal.")
+    if any(i not in selected and deductions.get(i, 0) == 0 for i in old):
+        st.info("Removed historical links have no recorded stock deduction, so they will not add stock back.")
+    invalid = any(r["Stock after saving"] < 0 for r in preview)
+    if invalid:
+        st.error("The selected quantity exceeds available stock.")
+    if st.button("Save linked cards", key=f"save_sale_cards_{sale_id}", disabled=invalid):
+        try:
+            database.set_sale_items(sale_id, items, reduce_inventory=not already_removed)
+        except ValueError as error:
+            st.error(str(error))
+        else:
+            st.rerun()
+
+
 def render_sales() -> None:
     st.subheader("Sales")
     with st.expander("Import eBay sales report"):
@@ -1015,16 +1074,11 @@ def render_sales() -> None:
                 )
                 st.success("Lot sale recorded and inventory updated.")
                 st.rerun()
-    automatic_match = database.auto_match_ebay_sales()
+    automatic_match = st.session_state.get("last_sale_match_result", {"matched": 0, "ambiguous": 0})
     sales = database.all_sales()
     if not sales:
         st.info("No sales have been imported yet.")
         return
-    if automatic_match["matched"]:
-        st.success(
-            f"Automatically matched {automatic_match['matched']:,} new eBay sale(s) "
-            "to inventory by item ID or SKU."
-        )
     frame = pd.DataFrame(sales)
     frame["profit_calculated"] = frame["profit"].notna()
     monetary_columns = [
@@ -1036,11 +1090,19 @@ def render_sales() -> None:
         frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
     frame["sale_datetime"] = pd.to_datetime(frame["sale_date"], errors="coerce")
 
-    with st.expander("Edit sale"):
+    with st.expander("Manage sales — edit details and linked cards", expanded=True):
+        search = st.text_input("Find a sale", placeholder="Card, buyer, order number, or sale ID", key="sale_search")
+        visible_sales = [s for s in sales if not search.strip() or search.casefold().strip() in
+                         " ".join(str(s.get(k) or "") for k in ("id", "title", "buyer", "order_number", "marketplace")).casefold()]
+        st.dataframe(pd.DataFrame(visible_sales, columns=["id", "sale_date", "title", "buyer", "quantity", "net_amount", "cost_of_goods", "profit", "status"]),
+                     hide_index=True, use_container_width=True)
         sale_choices = {
             f"S-{int(sale['id']):05d} — {sale['sale_date']} — {sale['title']}": sale
-            for sale in sales
+            for sale in visible_sales
         }
+        if not sale_choices:
+            st.info("No sales match your search. Clear or change the search to edit a sale.")
+            return
         edit_sale_label = st.selectbox("Sale to edit", sale_choices, key="edit_sale_selection")
         edit_sale = sale_choices[edit_sale_label]
         edit_sale_id = int(edit_sale["id"])
@@ -1052,66 +1114,79 @@ def render_sales() -> None:
         current_payment = str(edit_sale.get("payment_method") or "")
         if current_payment not in payment_options:
             payment_options.append(current_payment)
-        with st.form(f"edit_sale_form_{edit_sale_id}"):
+        with st.container():
             edit_row_1 = st.columns(4)
-            edit_sale_date = edit_row_1[0].date_input("Sale date", value=edit_sale_date_default)
+            edit_sale_date = edit_row_1[0].date_input("Sale date", value=edit_sale_date_default, key=f"sale_edit_1124_{edit_sale_id}")
             edit_marketplace = edit_row_1[1].text_input(
                 "Marketplace", value=str(edit_sale.get("marketplace") or "")
-            )
+            , key=f"sale_edit_1125_{edit_sale_id}")
             edit_order = edit_row_1[2].text_input(
                 "Order number", value=str(edit_sale.get("order_number") or "")
-            )
+            , key=f"sale_edit_1128_{edit_sale_id}")
             edit_item_id = edit_row_1[3].text_input(
                 "Marketplace item ID", value=str(edit_sale.get("item_id") or "")
-            )
+            , key=f"sale_edit_1131_{edit_sale_id}")
             edit_row_2 = st.columns(4)
             edit_title = edit_row_2[0].text_input(
                 "Title *", value=str(edit_sale.get("title") or "")
-            )
+            , key=f"sale_edit_1135_{edit_sale_id}")
             edit_buyer = edit_row_2[1].text_input(
                 "Buyer", value=str(edit_sale.get("buyer") or "")
-            )
-            edit_sku = edit_row_2[2].text_input("SKU", value=str(edit_sale.get("sku") or ""))
+            , key=f"sale_edit_1138_{edit_sale_id}")
+            edit_sku = edit_row_2[2].text_input("SKU", value=str(edit_sale.get("sku") or ""), key=f"sale_edit_1141_{edit_sale_id}")
             edit_payment = edit_row_2[3].selectbox(
                 "Payment method", payment_options, index=payment_options.index(current_payment)
-            )
+            , key=f"sale_edit_1142_{edit_sale_id}")
             manual_consideration = edit_payment in {"Cash", "Trade-in value", "Cash + trade"}
             edit_row_3 = st.columns(4)
             edit_subtotal_input = edit_row_3[0].number_input(
                 "Item subtotal", min_value=0.0, value=float(edit_sale.get("item_subtotal") or 0),
                 format="%.2f", disabled=manual_consideration,
-            )
+             key=f"sale_edit_1147_{edit_sale_id}")
             edit_cash = edit_row_3[1].number_input(
                 "Cash received", min_value=0.0, value=float(edit_sale.get("cash_received") or 0),
                 format="%.2f", disabled=edit_payment == "Trade-in value",
-            )
+             key=f"sale_edit_1151_{edit_sale_id}")
             edit_trade = edit_row_3[2].number_input(
                 "Trade-in value", min_value=0.0, value=float(edit_sale.get("trade_value") or 0),
                 format="%.2f", disabled=edit_payment in {"", "Cash", "eBay managed payments", "Other"},
-            )
+             key=f"sale_edit_1155_{edit_sale_id}")
             edit_tax = edit_row_3[3].number_input(
                 "Tax collected", min_value=0.0, value=float(edit_sale.get("tax_collected") or 0),
                 format="%.2f",
-            )
+             key=f"sale_edit_1159_{edit_sale_id}")
             edit_row_4 = st.columns(4)
             edit_shipping = edit_row_4[0].number_input(
                 "Shipping charged", min_value=0.0, value=float(edit_sale.get("shipping_charged") or 0),
                 format="%.2f",
-            )
+             key=f"sale_edit_1164_{edit_sale_id}")
             edit_fees = edit_row_4[1].number_input(
                 "Platform fees", min_value=0.0, value=float(edit_sale.get("fees") or 0), format="%.2f"
-            )
+            , key=f"sale_edit_1168_{edit_sale_id}")
             edit_promoted = edit_row_4[2].number_input(
                 "Promoted fees", min_value=0.0,
                 value=float(edit_sale.get("promoted_listing_fees") or 0), format="%.2f",
-            )
+             key=f"sale_edit_1171_{edit_sale_id}")
             edit_label = edit_row_4[3].number_input(
                 "Shipping label cost", min_value=0.0,
                 value=float(edit_sale.get("shipping_label_cost") or 0), format="%.2f",
-            )
-            edit_notes = st.text_area("Notes", value=str(edit_sale.get("notes") or ""))
+             key=f"sale_edit_1175_{edit_sale_id}")
+            edit_notes = st.text_area("Notes", value=str(edit_sale.get("notes") or ""), key=f"sale_edit_1179_{edit_sale_id}")
             st.caption("Editing a sale does not change inventory quantities or its linked inventory card.")
-            edit_sale_submitted = st.form_submit_button("Save sale changes", type="primary")
+            preview_cash = 0.0 if edit_payment == "Trade-in value" else float(edit_cash)
+            preview_trade = float(edit_trade) if edit_payment in {"Trade-in value", "Cash + trade"} else 0.0
+            preview_subtotal = preview_cash + preview_trade if manual_consideration else float(edit_subtotal_input)
+            preview_net = round(preview_subtotal + edit_shipping - edit_fees - edit_promoted - edit_label
+                                - float(edit_sale.get("refunded_amount") or 0)
+                                - float(edit_sale.get("additional_expenses") or 0)
+                                - float(edit_sale.get("return_shipping_cost") or 0), 2)
+            preview_columns = st.columns(2)
+            preview_columns[0].metric("Net after saving", f"${preview_net:,.2f}", f"${preview_net - float(edit_sale['net_amount']):,.2f}")
+            cogs = edit_sale.get("cost_of_goods")
+            preview_columns[1].metric("Profit after saving", "Cost not linked" if cogs is None else f"${preview_net - float(cogs):,.2f}")
+            if cogs == 0:
+                st.caption("Recorded cost is $0. Verify acquisition and grading costs before relying on profit.")
+            edit_sale_submitted = st.button("Save sale changes", type="primary", key=f"save_sale_details_{edit_sale_id}")
         if edit_sale_submitted:
             if not edit_title.strip():
                 st.error("Title is required.")
@@ -1134,6 +1209,8 @@ def render_sales() -> None:
                 st.success(f"Updated sale S-{edit_sale_id:05d}.")
                 st.rerun()
 
+        st.divider()
+        _render_sale_inventory(edit_sale)
         st.divider()
         st.markdown("#### Delete sale")
         st.caption(
@@ -1318,11 +1395,17 @@ def render_sales() -> None:
 
     with st.expander("Automatic matching and unmatched sales"):
         st.caption(
-            "Automatic matching runs whenever this page loads. It uses a unique eBay item ID "
+            "Matching uses a unique eBay item ID "
             "first, then the eBay Custom label / Price Hunter SKU. Automatic matching calculates "
             "COGS and profit but does not reduce inventory."
         )
-        unmatched = [sale for sale in sales if sale.get("card_id") is None]
+        if st.button("Find matches by item ID or SKU"):
+            result = database.auto_match_ebay_sales()
+            st.session_state["last_sale_match_result"] = result
+            st.rerun()
+        if "last_sale_match_result" in st.session_state:
+            st.caption(f"Last matching run: {automatic_match['matched']} matched. Review inventory quantities under Manage sales.")
+        unmatched = [sale for sale in sales if sale.get("card_id") is None and not database.sale_items(int(sale["id"]))]
         ebay_unmatched = [sale for sale in unmatched if sale.get("marketplace") == "eBay"]
         matched_total = len(sales) - len(unmatched)
         match_metrics = st.columns(3)
@@ -1349,17 +1432,20 @@ def render_sales() -> None:
             sale_label = st.selectbox("Unmatched sale", sale_choices)
             card_label = st.selectbox("Inventory card", card_choices)
             reduce_inventory = st.checkbox(
-                "Reduce inventory quantity",
+                "Already removed from inventory",
                 value=False,
-                help="Leave off when the imported inventory already excludes sold cards.",
+                help="Leave unchecked to deduct stock when linking this sale.",
             )
             if st.button("Link sale to selected card"):
-                database.link_sale_to_card(
-                    sale_choices[sale_label]["id"],
-                    card_choices[card_label]["id"],
-                    reduce_inventory=reduce_inventory,
-                )
-                st.rerun()
+                try:
+                    database.link_sale_to_card(
+                        sale_choices[sale_label]["id"], card_choices[card_label]["id"],
+                        reduce_inventory=not reduce_inventory,
+                    )
+                except ValueError as error:
+                    st.error(str(error))
+                else:
+                    st.rerun()
 
     with st.expander("Manage return, refund, cancellation, or packing slip"):
         sale_choices = {

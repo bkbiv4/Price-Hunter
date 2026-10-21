@@ -1,0 +1,940 @@
+{
+  "source": "D:\\iCloudDrive\\4. Business & Side Hustles\\Hidden Richz LLC\\Excel Sheets\\CardBusiness_Starter_Tracker2.xlsx",
+  "source_sha256": "9e83f8eac11ed7e7820fa118aa9d12e95e1ca5b479739fe946f24a1bd769768b",
+  "tables": {
+    "purchases": {
+      "source_valid_rows": 161,
+      "skipped": [
+        "Purchase row 11: Pokemon Sword & Shield Ultra Premium Collection has no valid purchase price.",
+        "Purchase row 12: Pokemon Lost Origin ETB has no valid purchase price.",
+        "Purchase row 178: Pokemon Scarlet & Violet 151 Ultra Premium Collection has no valid purchase price.",
+        "Purchase row 179: Pokemon Scarlet & Violet 151 ETB has no valid purchase price."
+      ],
+      "updates": [
+        {
+          "id": 141,
+          "description": "One Piece Heroines Booster Box",
+          "changes": {
+            "source_key": [
+              null,
+              "purchase:d8e77e1ca45b2eff00cde6e456028172b12c5cc01851771c591962786ab89ae0"
+            ],
+            "set_name": [
+              "One Piece Heroines",
+              "One Piece Heroines Booster Box"
+            ]
+          }
+        },
+        {
+          "id": 134,
+          "description": "One Piece The Azure Sea's Seven Booster Box",
+          "changes": {
+            "source_key": [
+              "purchase:552a58fb7307818abe2489be8b78d0898c1d3eef54efd4cf015567154b7d69d6",
+              "purchase:16183e998b067afdded11022f8a666e656987162f74e4d6e85c73bf42a38e50d"
+            ],
+            "purchase_date": [
+              "2026-04-29",
+              "2026-04-27"
+            ]
+          }
+        },
+        {
+          "id": 144,
+          "description": "One Piece Adventure On Kami's Island Booster Box",
+          "changes": {
+            "source_key": [
+              null,
+              "purchase:ce636300c61c326ad9b88be952c92647905fcb9518abe0b034811789e95b49cd"
+            ],
+            "set_name": [
+              "One Piece Adventure On Kami's Island",
+              "One Piece Adventure on Kami's Island"
+            ],
+            "payment_account": [
+              "",
+              "Sofi 8861"
+            ],
+            "receipt_ref": [
+              "",
+              "#BgQG"
+            ]
+          }
+        },
+        {
+          "id": 145,
+          "description": "One Piece Heroines Booster Box",
+          "changes": {
+            "source_key": [
+              null,
+              "purchase:14de26ce336255ef72c0b6f37ec839f1a6e5ae436a086a256afffbf56b406df6"
+            ],
+            "payment_account": [
+              "",
+              "Sofi 8861"
+            ],
+            "receipt_ref": [
+              "",
+              "#BgQG"
+            ]
+          }
+        },
+        {
+          "id": 142,
+          "description": "One Piece The Time of Battle Booster Box",
+          "changes": {
+            "source_key": [
+              null,
+              "purchase:b4379627e47f12d054fa8e3eec7050063eaaa7c7dde76ae55ea4a4ed17ff819a"
+            ],
+            "payment_account": [
+              "",
+              "Cash"
+            ],
+            "receipt_ref": [
+              "",
+              "#vJpQ"
+            ]
+          }
+        },
+        {
+          "id": 143,
+          "description": "One Piece The Azure Sea's Seven Booster Box",
+          "changes": {
+            "source_key": [
+              null,
+              "purchase:e2ecbc42fe796b1e578e64034a6893302def20ba5f3e9b80d435056aab6bf08e"
+            ],
+            "payment_account": [
+              "",
+              "Cash"
+            ],
+            "receipt_ref": [
+              "",
+              "#vJpQ"
+            ]
+          }
+        },
+        {
+          "id": 146,
+          "description": "MTG: Spiderman Play Booster Box",
+          "changes": {
+            "source_key": [
+              "receipt:46d80c773fc30c0ddb6c0eef75a36dad609eb01efadb62e082f3d722dc17597a",
+              "purchase:b4a3ab3af6d31dce1675d9ead4168e40bd7feab4f6a5050d6e2b4a38d17bb76f"
+            ],
+            "description": [
+              "Magic The Gathering Spiderman Play Booster Box",
+              "MTG: Spiderman Play Booster Box"
+            ],
+            "category": [
+              "Magic The Gathering",
+              "MTG"
+            ],
+            "set_name": [
+              "Magic The Gathering Spiderman",
+              "MTG: Spiderman"
+            ],
+            "cards_expected": [
+              0,
+              840
+            ],
+            "vendor": [
+              "The Fantastic Store",
+              "Fantastic Store"
+            ],
+            "payment_account": [
+              "Mastercard ending in 8067",
+              "Bluevine"
+            ]
+          }
+        },
+        {
+          "id": 150,
+          "description": "MTG: Avatar The Last Airbender Play Booster Box",
+          "changes": {
+            "source_key": [
+              "receipt:8bf0252b7c0681c1f2dc399b97e975d1487e7a02a909ceb0d1f8c573dbd04358",
+              "purchase:986c2148dbe067f12606afe22198099051546cfc0232a363f6c4a1bb35fda2b7"
+            ],
+            "purchase_date": [
+              "2026-08-07",
+              "2026-08-05"
+            ],
+            "description": [
+              "Magic Avatar: The Last Airbender Play Booster Box",
+              "MTG: Avatar The Last Airbender Play Booster Box"
+            ],
+            "category": [
+              "Magic The Gathering",
+              "MTG"
+            ],
+            "set_name": [
+              "Magic Avatar: The Last Airbender",
+              "MTG: Avatar The Last Airbender"
+            ],
+            "cards_expected": [
+              0,
+              420
+            ],
+            "vendor": [
+              "The Village LLC",
+              "The Village"
+            ]
+          }
+        },
+        {
+          "id": 149,
+          "description": "MTG: Marvel Super Heroes Jumpstart Booster Box",
+          "changes": {
+            "source_key": [
+              "receipt:f4b92bd667c76a62f116a98882c2cad26194137368ac1032b487d8c832d5c323",
+              "purchase:d504ff04b1ceba11ffb714bc3ad4a72ecca133f014057c04985106733db97c2f"
+            ],
+            "purchase_date": [
+              "2026-08-07",
+              "2026-08-05"
+            ],
+            "description": [
+              "Magic TCG: Marvel Super Heroes Jumpstart Booster Box",
+              "MTG: Marvel Super Heroes Jumpstart Booster Box"
+            ],
+            "category": [
+              "Magic The Gathering",
+              "MTG"
+            ],
+            "set_name": [
+              "Marvel Super Heroes MTG",
+              "MTG: Marvel Super Heroes"
+            ],
+            "cards_expected": [
+              0,
+              480
+            ],
+            "vendor": [
+              "The Village LLC",
+              "The Village"
+            ]
+          }
+        },
+        {
+          "id": 151,
+          "description": "MTG: Marvel Super Heroes Play Booster Box",
+          "changes": {
+            "source_key": [
+              "receipt:2add0e56bbec23bea72c64f807e34d6fe08343010a2cdaa5149deefdcb0334af",
+              "purchase:03d35c38c419cd953551130bab46b75ae41da24a3466395ae887b9ae0d6301c7"
+            ],
+            "purchase_date": [
+              "2026-08-07",
+              "2026-08-05"
+            ],
+            "description": [
+              "Marvel Super Heroes MTG Play Booster Box",
+              "MTG: Marvel Super Heroes Play Booster Box"
+            ],
+            "category": [
+              "Magic The Gathering",
+              "MTG"
+            ],
+            "set_name": [
+              "Marvel Super Heroes MTG",
+              "MTG: Marvel Super Heroes"
+            ],
+            "cards_expected": [
+              0,
+              420
+            ],
+            "vendor": [
+              "The Village LLC",
+              "The Village"
+            ]
+          }
+        },
+        {
+          "id": 152,
+          "description": "MTG: Avatar The Last Airbender Jumpstart Booster Box",
+          "changes": {
+            "source_key": [
+              "receipt:d8d3748a01b6eb21b01da21923457cf6f00da0f8b899eb7723da48ef1a6aa547",
+              "purchase:e2a75b96b7e216427d466c0739b0ddba66d193538194aa1f143428bef0e832d4"
+            ],
+            "purchase_date": [
+              "2026-08-07",
+              "2026-08-05"
+            ],
+            "description": [
+              "Magic Avatar: The Last Airbender Jumpstart Booster Box",
+              "MTG: Avatar The Last Airbender Jumpstart Booster Box"
+            ],
+            "category": [
+              "Magic The Gathering",
+              "MTG"
+            ],
+            "set_name": [
+              "Magic Avatar: The Last Airbender",
+              "MTG: Avatar The Last Airbender"
+            ],
+            "cards_expected": [
+              0,
+              480
+            ],
+            "vendor": [
+              "The Village LLC",
+              "The Village"
+            ]
+          }
+        },
+        {
+          "id": 153,
+          "description": "MTG: Final Fantasy Play Booster Box",
+          "changes": {
+            "source_key": [
+              "receipt:dea73ec28ab42d117f9ef13092aadd0d8ae417d9da8c73e80bdb3c5836ff4a89",
+              "purchase:04d3e07f131976230603ced99870b3389598c0c6f499be784b8c802341fb26d0"
+            ],
+            "purchase_date": [
+              "2026-08-07",
+              "2026-08-05"
+            ],
+            "description": [
+              "Magic Final Fantasy Play Booster Box",
+              "MTG: Final Fantasy Play Booster Box"
+            ],
+            "category": [
+              "Magic The Gathering",
+              "MTG"
+            ],
+            "set_name": [
+              "Magic Final Fantasy",
+              "MTG: Final Fantasy"
+            ],
+            "cards_expected": [
+              0,
+              840
+            ],
+            "vendor": [
+              "The Village LLC",
+              "The Village"
+            ]
+          }
+        },
+        {
+          "id": 154,
+          "description": "MTG: Marvel Super Heroes Gift  Box",
+          "changes": {
+            "source_key": [
+              "receipt:c2a3e6abb8c01b57083c1ee7eb2c4364e4a7f3f24ec16846a5e3b1abc504ca6d",
+              "purchase:b7806e9dfbf09a2de0b2e74630a483a4ee141b764a7c0fc97588cbfb10e6db61"
+            ],
+            "purchase_date": [
+              "2026-08-07",
+              "2026-08-05"
+            ],
+            "description": [
+              "Marvel Super Heroes MTG Marvel Gift Bundle",
+              "MTG: Marvel Super Heroes Gift  Box"
+            ],
+            "category": [
+              "Magic The Gathering",
+              "MTG"
+            ],
+            "set_name": [
+              "Marvel Super Heroes MTG",
+              "MTG: Marvel Super Heroes"
+            ],
+            "cards_expected": [
+              0,
+              172
+            ],
+            "vendor": [
+              "The Village LLC",
+              "The Village"
+            ]
+          }
+        },
+        {
+          "id": 155,
+          "description": "MTG: Marvel Super Heroes Draft Night Box",
+          "changes": {
+            "source_key": [
+              "receipt:521356aee3493aa1d94d36704cd792e42ff8979a6619188f8f2d229ea75fd4b6",
+              "purchase:4529aae5e8356a04869ee5fe1210112227fa0d0b340fe6b884f1b50ebaadf23d"
+            ],
+            "purchase_date": [
+              "2026-08-07",
+              "2026-08-05"
+            ],
+            "description": [
+              "Marvel Super Heroes MTG Draft Night",
+              "MTG: Marvel Super Heroes Draft Night Box"
+            ],
+            "category": [
+              "Magic The Gathering",
+              "MTG"
+            ],
+            "set_name": [
+              "Marvel Super Heroes MTG",
+              "MTG: Marvel Super Heroes"
+            ],
+            "cards_expected": [
+              0,
+              546
+            ],
+            "vendor": [
+              "The Village LLC",
+              "The Village"
+            ]
+          }
+        },
+        {
+          "id": 147,
+          "description": "One Piece Heroines Booster Box",
+          "changes": {
+            "source_key": [
+              "receipt:a4386b225130fca3fb29ada173e2f5c86f3630a485aa83f8f4eeade770bf07ac",
+              "purchase:99e4aa204d9bd927d7cb9825ec7f76de8b5cf246b8c63daef93aeee5efc06971"
+            ],
+            "vendor": [
+              "The Fantastic Store",
+              "Fantastic Store"
+            ],
+            "payment_account": [
+              "Mastercard ending in 8067",
+              "Bluevine"
+            ]
+          }
+        },
+        {
+          "id": 148,
+          "description": "One Piece The Time of Battle Booster Box",
+          "changes": {
+            "source_key": [
+              "receipt:9e66037345737373ea7e7813ca8b74899e0b63d53f76f90eb8a9ca52c7663974",
+              "purchase:da3d791fb0f9009cd62d7723d5474123bce684ea49c578394f8253b32abfcf1f"
+            ],
+            "description": [
+              "One Piece The Time Of Battle Booster Box",
+              "One Piece The Time of Battle Booster Box"
+            ],
+            "set_name": [
+              "One Piece The Time Of Battle",
+              "One Piece The Time of Battle"
+            ],
+            "vendor": [
+              "The Fantastic Store",
+              "Fantastic Store"
+            ],
+            "payment_account": [
+              "Mastercard ending in 8067",
+              "Bluevine"
+            ]
+          }
+        }
+      ],
+      "additions": [
+        {
+          "source_key": "purchase:5b4ca837728e5bade8b1c3bd7a11ea95d3515403db39988a2a6b62420c429979",
+          "purchase_date": "2026-05-08",
+          "description": "One Piece Singles",
+          "category": "One Piece",
+          "set_name": "",
+          "quantity": 1,
+          "cards_expected": 0,
+          "vendor": "Boxed.gg",
+          "purchase_price": 99.98,
+          "shipping": 0.0,
+          "tax": 0.0,
+          "total_cost": 99.98,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "purchase:ebdcbbba19586a7506eb32f0cb73221f7b04ec0d6cec3db11f714ae5dea0219f",
+          "purchase_date": "2026-05-09",
+          "description": "One Piece The Azure Sea's Seven Booster Box",
+          "category": "One Piece",
+          "set_name": "One Piece The Azure Sea's Seven",
+          "quantity": 2,
+          "cards_expected": 576,
+          "vendor": "Fantastic Store",
+          "purchase_price": 530.0,
+          "shipping": 0.0,
+          "tax": 31.8,
+          "total_cost": 561.8,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "purchase:8539b780d3c1f54a3c34f5b135789d56abdf558b1cd29c2ebe9ed29328cb28c4",
+          "purchase_date": "2026-05-09",
+          "description": "One Piece Adventure On Kami's Island Booster Box",
+          "category": "One Piece",
+          "set_name": "One Piece Adventure on Kami's Island",
+          "quantity": 1,
+          "cards_expected": 288,
+          "vendor": "Fantastic Store",
+          "purchase_price": 210.0,
+          "shipping": 0.0,
+          "tax": 12.6,
+          "total_cost": 222.6,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "purchase:f1d9849aa27f25c270be5c8bcae132ca66eddf5905bc8acc6fb06343ad856105",
+          "purchase_date": "2026-08-28",
+          "description": "One Piece The World's Strongest Warriors Booster Box",
+          "category": "One Piece",
+          "set_name": "One Piece The World's Strongest Warriors",
+          "quantity": 6,
+          "cards_expected": 1728,
+          "vendor": "Fantastic Store",
+          "purchase_price": 1980.0,
+          "shipping": 0.0,
+          "tax": 118.8,
+          "total_cost": 2098.8,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "purchase:bb9183cf6c443b552f868c861cbf5676047bcce8018c43fd5f22d757d49489e2",
+          "purchase_date": "2026-08-28",
+          "description": "One Piece The Time of Battle Booster Box",
+          "category": "One Piece",
+          "set_name": "One Piece The Time of Battle",
+          "quantity": 2,
+          "cards_expected": 576,
+          "vendor": "Fantastic Store",
+          "purchase_price": 450.0,
+          "shipping": 0.0,
+          "tax": 27.0,
+          "total_cost": 477.0,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "purchase:b865613e8e2ccdc5c84630243154a942f75d8d6d8b197515b12c53e82b2f10a6",
+          "purchase_date": "2026-10-16",
+          "description": "One Piece The World's Strongest Warriors Booster Box",
+          "category": "One Piece",
+          "set_name": "One Piece The World's Strongest Warriors",
+          "quantity": 2,
+          "cards_expected": 576,
+          "vendor": "Fantastic Store",
+          "purchase_price": 690.0,
+          "shipping": 0.0,
+          "tax": 41.4,
+          "total_cost": 731.4,
+          "payment_account": "Bluevine",
+          "receipt_ref": "",
+          "notes": ""
+        }
+      ],
+      "added_total": 4191.58,
+      "unchanged": 139
+    },
+    "expenses": {
+      "source_valid_rows": 73,
+      "skipped": [
+        "Expense row 7: Toploaders & Pennies has no valid amount."
+      ],
+      "updates": [
+        {
+          "id": 48,
+          "description": "Softbox Photography Kit",
+          "changes": {
+            "category": [
+              "",
+              "Small Equipment De Minimis"
+            ]
+          }
+        },
+        {
+          "id": 49,
+          "description": "Vivo ultrawide mount",
+          "changes": {
+            "category": [
+              "",
+              "Small Equipment De Minimis"
+            ]
+          }
+        },
+        {
+          "id": 50,
+          "description": "OUUTMEE Graded Card Case, Trading Card Storage Box",
+          "changes": {
+            "source_key": [
+              null,
+              "expense:10d79dd84936986534614ab70a837c879c59c0e3be8c56002a02b797c9d029d3"
+            ],
+            "vendor": [
+              "Amazon.com",
+              "Amazon"
+            ],
+            "description": [
+              "OUUTMEE Graded Card Case, Trading Card Storage Box for Card Slab",
+              "OUUTMEE Graded Card Case, Trading Card Storage Box"
+            ]
+          }
+        }
+      ],
+      "additions": [
+        {
+          "source_key": "expense:623b2c1d0299631c2fd60277b3289e795ab63c10e5d5184482189ac29b1a3522",
+          "expense_date": "2026-05-09",
+          "vendor": "Amazon",
+          "description": "5 Tier Wooden Card Display Stand",
+          "quantity": 2,
+          "category": "Supplies",
+          "amount": 18.99,
+          "tax": 2.28,
+          "shipping": 0.0,
+          "total": 40.26,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:77266a9345488d74a2ae2e3fdb4532d0102070bb246b1854b77f12c2c6c26544",
+          "expense_date": "2026-05-13",
+          "vendor": "Microcenter",
+          "description": "Canon EOS R50 V Digital Mirrorless Camera w/ Lens",
+          "quantity": 1,
+          "category": "Small Equipment De Minimis",
+          "amount": 799.99,
+          "tax": 48.0,
+          "shipping": 0.0,
+          "total": 847.99,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:31b8681b9d9915a8ec2d0bd9eae3b16bf373887794812d93a4d5e2bb471dfb89",
+          "expense_date": "2026-05-13",
+          "vendor": "Microcenter",
+          "description": "Wrap-It Stick 'Em Roll - 10' x 2\" (Industrial Strength)",
+          "quantity": 1,
+          "category": "Supplies",
+          "amount": 15.99,
+          "tax": 0.96,
+          "shipping": 0.0,
+          "total": 16.95,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:5027309b3d34cae40c890162299576b1bd9e42ebe880eb3c5999ac19d22966a9",
+          "expense_date": "2026-05-13",
+          "vendor": "Microcenter",
+          "description": "Wrap n Strap 400-12X75PBL Self-Gripping Perforated Tie Roll",
+          "quantity": 1,
+          "category": "Supplies",
+          "amount": 7.99,
+          "tax": 0.48,
+          "shipping": 0.0,
+          "total": 8.47,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:bc65aea00059b10eb093f0caa0b9d49daf0bdaa4645616a1692100722354a90a",
+          "expense_date": "2026-05-13",
+          "vendor": "Microcenter",
+          "description": "2 Year Protection Plan - Camera",
+          "quantity": 1,
+          "category": "Waranty",
+          "amount": 89.99,
+          "tax": 5.4,
+          "shipping": 0.0,
+          "total": 95.39,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:93e1dcab9da444b03f3aea6c71a5fccf3895062b5cce6d7bfc010283621b59eb",
+          "expense_date": "2026-05-13",
+          "vendor": "Microcenter",
+          "description": "Ultra Duster Air Duster 8 oz. - 2-pack",
+          "quantity": 1,
+          "category": "Supplies",
+          "amount": 10.99,
+          "tax": 0.66,
+          "shipping": 0.0,
+          "total": 11.65,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:96314c85c83f574bfbc0a3d9fce7f129b174d1a62c7d033c713835e1b3524b28",
+          "expense_date": "2026-05-13",
+          "vendor": "Microcenter",
+          "description": "Inland DisplayPort 1.4 Male to DisplayPort 1.4 Male 8K Cable 10 ft",
+          "quantity": 1,
+          "category": "Small Equipment De Minimis",
+          "amount": 24.99,
+          "tax": 1.5,
+          "shipping": 0.0,
+          "total": 26.49,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:baf105ee9c36db28feb0496613f5e853f0a79c6f33047fcd9a488afabeccb40b",
+          "expense_date": "2026-05-26",
+          "vendor": "Microcenter",
+          "description": "Rode Microphones PSA1 Plus Professional Studio Microphone Arm Mount - White",
+          "quantity": 1,
+          "category": "Small Equipment De Minimis",
+          "amount": 149.99,
+          "tax": 9.0,
+          "shipping": 0.0,
+          "total": 158.99,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:9878553a65a6b7a5b96fd025aff70c5ffb429492e12d252d57e083ee93fb7b20",
+          "expense_date": "2026-06-13",
+          "vendor": "Microcenter",
+          "description": "Logitech G G903 LIGHTSPEED RGB Wireless Optical Gaming Mouse - Black",
+          "quantity": 1,
+          "category": "Small Equipment De Minimis",
+          "amount": 109.99,
+          "tax": 6.6,
+          "shipping": 0.0,
+          "total": 116.59,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:d6f0ecdcf3b6c36c75200732a6f6c8684ff58e7796b5da2e05e3ecea8db5d94d",
+          "expense_date": "2026-06-13",
+          "vendor": "Microcenter",
+          "description": "MPI On Stage CM01 Video Camera/Digital Recorder Adapter",
+          "quantity": 1,
+          "category": "Small Equipment De Minimis",
+          "amount": 17.99,
+          "tax": 1.08,
+          "shipping": 0.0,
+          "total": 19.07,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:59af38e35ce63cc877e1e027fb812d9d9ed9dee9bf5c8cd3bfece0c2f8b0b7bb",
+          "expense_date": "2026-06-13",
+          "vendor": "Microcenter",
+          "description": "3 Year Protection Plan - Logitech Mouse",
+          "quantity": 1,
+          "category": "Waranty",
+          "amount": 39.99,
+          "tax": 2.4,
+          "shipping": 0.0,
+          "total": 42.39,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:0f58917d6407b8924a7991b0665a47710145c3073fec0118551ac2034e6eae77",
+          "expense_date": "2026-07-07",
+          "vendor": "PSA",
+          "description": "Card Grading",
+          "quantity": 1,
+          "category": "Grading Fees",
+          "amount": 351.46,
+          "tax": 0.0,
+          "shipping": 0.0,
+          "total": 351.46,
+          "payment_account": "Klarna",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:b54951f716eb00fd08d94dcb985ea58ee85c3b8ebe613b1a320ae800f4e7b7e8",
+          "expense_date": "2026-07-16",
+          "vendor": "PSA",
+          "description": "Card Grading",
+          "quantity": 1,
+          "category": "Grading Fees",
+          "amount": 494.92,
+          "tax": 0.0,
+          "shipping": 0.0,
+          "total": 494.92,
+          "payment_account": "Affirm",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:886c18be194173a2ce30c16f45d46e1de9c8bf704613e45fc2411db4ce6936fb",
+          "expense_date": "2026-07-19",
+          "vendor": "Amazon",
+          "description": "FEZIBO 71 x 37 Inch Standing Desk",
+          "quantity": 1,
+          "category": "Small Equipment De Minimis",
+          "amount": 369.99,
+          "tax": 22.2,
+          "shipping": 0.0,
+          "total": 392.19,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:55522d056375cabb32cb91b5694180d1c10cb71fdf067e7287a7f1772ddb64ac",
+          "expense_date": "2026-07-20",
+          "vendor": "Amazon",
+          "description": "GTPLAYER Big and Tall Gaming Chair",
+          "quantity": 1,
+          "category": "Small Equipment De Minimis",
+          "amount": 179.47,
+          "tax": 10.77,
+          "shipping": 0.0,
+          "total": 190.24,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:1d545312d9de9e8b31c2d3c018300f8fc897609778431ef63fae7377b86ebd8d",
+          "expense_date": "2026-07-20",
+          "vendor": "Amazon",
+          "description": "5 Tier Wooden Card Display Stand",
+          "quantity": 2,
+          "category": "Supplies",
+          "amount": 19.99,
+          "tax": 2.4,
+          "shipping": 0.0,
+          "total": 42.38,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:8bbfc078df59751c13fb8cd8611295496f31935b56ec099bd0f72cdc44d54327",
+          "expense_date": "2026-07-20",
+          "vendor": "Amazon",
+          "description": "Elcoho 12 Pieces Fake Grass",
+          "quantity": 6,
+          "category": "Supplies",
+          "amount": 13.99,
+          "tax": 5.04,
+          "shipping": 0.0,
+          "total": 88.98,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:2f5c3018d5b04ef96a8dc0fee11ee2d73b42f9d5b1c79b36d73b55468f6dc47a",
+          "expense_date": "2026-07-29",
+          "vendor": "Amazon",
+          "description": "2000 Card Sleeves Top Loaders for Cards",
+          "quantity": 1,
+          "category": "Supplies",
+          "amount": 63.59,
+          "tax": 3.82,
+          "shipping": 0.0,
+          "total": 67.41,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:7ba80761de86fd88fb9699094257f9fdf7c9761151c78573f827b6ddd0bd5e9e",
+          "expense_date": "2026-08-06",
+          "vendor": "Amazon",
+          "description": "2000 Card Sleeves Top Loaders for Cards",
+          "quantity": 2,
+          "category": "Supplies",
+          "amount": 61.68,
+          "tax": 7.4,
+          "shipping": 0.0,
+          "total": 130.76,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:34081faeb86a057dec0603ec1adc666e263cdaa90ce6985c3c99629b815f4836",
+          "expense_date": "2026-08-27",
+          "vendor": "PSA",
+          "description": "Card Grading",
+          "quantity": 1,
+          "category": "Grading Fees",
+          "amount": 539.84,
+          "tax": 0.0,
+          "shipping": 0.0,
+          "total": 539.84,
+          "payment_account": "Affirm",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:523bb6644818b853a03ca64be59006ddafe7439709c746cc93dcf9e229064de7",
+          "expense_date": "2026-08-28",
+          "vendor": "Fantastic Store",
+          "description": "Ultra Pro Graded Card Submission Semi Rigid Tall Card Sleeve (200/Box)",
+          "quantity": 1,
+          "category": "Supplies",
+          "amount": 50.0,
+          "tax": 3.0,
+          "shipping": 0.0,
+          "total": 53.0,
+          "payment_account": "Sofi 8861 /",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:cdb24f24bc88ee2936c73efec71aeb773bc513c4cf63efbac87e94df169d5710",
+          "expense_date": "2026-08-29",
+          "vendor": "Amazon",
+          "description": "NUMINA 6 Pack 2 Row Trading Card Storage Boxes for Baseball Cards",
+          "quantity": 1,
+          "category": "Supplies",
+          "amount": 28.49,
+          "tax": 1.71,
+          "shipping": 0.0,
+          "total": 30.2,
+          "payment_account": "",
+          "receipt_ref": "",
+          "notes": ""
+        },
+        {
+          "source_key": "expense:968421989bf6676d149aebc6388ea66986ef134c0f0a958da31fa36976720d72",
+          "expense_date": "2026-09-14",
+          "vendor": "Beckett",
+          "description": "Card Grading",
+          "quantity": 1,
+          "category": "Grading Fees",
+          "amount": 1146.85,
+          "tax": 0.0,
+          "shipping": 0.0,
+          "total": 1146.85,
+          "payment_account": "Affirm",
+          "receipt_ref": "",
+          "notes": ""
+        }
+      ],
+      "added_total": 4912.47,
+      "unchanged": 47
+    }
+  },
+  "backup": "C:\\Coding\\Price Hunter\\price_hunter.before-tracker-sync-20261020-160009.db",
+  "verified": "All valid source rows matched once; unrelated tables unchanged; integrity and foreign keys pass."
+}
